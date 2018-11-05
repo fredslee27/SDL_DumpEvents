@@ -328,15 +328,6 @@ app_t * app_init (app_t * app)
 			    app->wflags);
   app->r = SDL_CreateRenderer(app->w, -1, app->rflags);
 
-  /* open joysticks. */
-  app->njs = SDL_NumJoysticks();
-  if (app->njs > MAX_JOYSTICKS)
-    app->njs = MAX_JOYSTICKS;
-  for (i = 0; i < app->njs; i++)
-    {
-      app->jspack[i] = SDL_JoystickOpen(i);
-    }
-
   /* load fonts. */
   TTF_Init();
 
@@ -476,6 +467,7 @@ int app_on_window (app_t * app, SDL_Event * evt)
     }
 }
 
+/* handle KEYDOWN (keyboard key press) event. */
 int app_on_keydown (app_t * app, SDL_Event * evt)
 {
   if (evt->key.repeat)
@@ -492,6 +484,7 @@ int app_on_keydown (app_t * app, SDL_Event * evt)
   return 0;
 }
 
+/* handle KEYUP (keyboard key release) event. */
 int app_on_keyup (app_t * app, SDL_Event * evt)
 {
   const char * keyname = SDL_GetKeyName(evt->key.keysym.sym);
@@ -509,6 +502,7 @@ int app_on_keyup (app_t * app, SDL_Event * evt)
   return 0;
 }
 
+/* handle MOUSEMOTION (mouse moving) event. */
 int app_on_mousemove (app_t * app, SDL_Event * evt)
 {
   app_fwrite(app, CAT_MOUSE, "MV: %+d%+d:(%d,%d)",
@@ -520,18 +514,21 @@ int app_on_mousemove (app_t * app, SDL_Event * evt)
   return 0;
 }
 
+/* handle MOUSEBUTTONDOWN (mouse button press) event. */
 int app_on_mousebdown (app_t * app, SDL_Event * evt)
 {
   app_fwrite(app, CAT_MOUSE, "PRESS: %d", evt->button.button);
   return 0;
 }
 
+/* handle MOUSEBUTTONUP (mouse button release) event. */
 int app_on_mousebup (app_t * app, SDL_Event * evt)
 {
   app_fwrite(app, CAT_MOUSE, "RELEASE: %d", evt->button.button);
   return 0;
 }
 
+/* handle MOUSEWHEEL (mouse wheel) event. */
 int app_on_mousewheel (app_t * app, SDL_Event * evt)
 {
   app_fwrite(app, CAT_MOUSE, "WHEEL: %+d%+d", evt->wheel.x, evt->wheel.y);
@@ -539,6 +536,7 @@ int app_on_mousewheel (app_t * app, SDL_Event * evt)
 }
 
 
+/* handle JOYAXISMOTION (joystick axis) event. */
 int app_on_joyaxis (app_t * app, SDL_Event * evt)
 {
   app_fwrite(app, CAT_JOY, "%d/AXIS/%d: %d",
@@ -548,6 +546,7 @@ int app_on_joyaxis (app_t * app, SDL_Event * evt)
   return 0;
 }
 
+/* handle JOYHATMOTION (joystick hat) event. */
 int app_on_joyhat (app_t * app, SDL_Event * evt)
 {
   app_fwrite(app, CAT_JOY, "%d/HAT/%d: %d",
@@ -557,6 +556,7 @@ int app_on_joyhat (app_t * app, SDL_Event * evt)
   return 0;
 }
 
+/* handle JOYBALLMOTION (joystick trackball) event. */
 int app_on_joyball (app_t * app, SDL_Event * evt)
 {
   app_fwrite(app, CAT_JOY, "%d/BALL/%d: %+d%+d",
@@ -567,6 +567,7 @@ int app_on_joyball (app_t * app, SDL_Event * evt)
   return 0;
 }
 
+/* handle JOYBUTTONDOWN (joystick button press) event. */
 int app_on_joybdown (app_t * app, SDL_Event * evt)
 {
   app_fwrite(app, CAT_JOY, "%d/PRESS: %d",
@@ -575,45 +576,136 @@ int app_on_joybdown (app_t * app, SDL_Event * evt)
   return 0;
 }
 
+/* handle JOYBUTTONUP (joystick button up) event. */
 int app_on_joybup (app_t * app, SDL_Event * evt)
 {
-  app_fwrite(app, CAT_JOY, "%d/RELEASE: %d",
+  return app_fwrite(app, CAT_JOY, "%d/RELEASE: %d",
 	     evt->jbutton.which,
 	     evt->jbutton.button);
   return 0;
 }
 
+/* handle joystick device events: connect, disconnect. */
 int app_on_joydev (app_t * app, SDL_Event * evt)
 {
   const char * action = "?";
-  if (evt->jdevice.type == SDL_JOYDEVICEADDED)
-    action = "ADD";
-  else if (evt->jdevice.type == SDL_JOYDEVICEREMOVED)
-    action = "REMOVE";
-  app_fwrite(app, CAT_JOY, "%s: %d", evt->jdevice.which);
+  char jsname[80] = { 0, };
+  int packidx = -1; /* opened joystick handles used by this app. */
+
+  /* device number, queried from system. */
+  int devnum = -1;
+  /* Joystick instance id, used by SDL events reporting. */
+  int instid = -1;
+
+  switch (evt->jdevice.type)
+    {
+    case SDL_JOYDEVICEADDED:
+      action = "ADD";
+      /* add to open devices. */
+      devnum = evt->jdevice.which; /* joystick device index. */
+      /* find empty handle slot. */
+      packidx = 0;
+      while (packidx < MAX_JOYSTICKS)
+	{
+	  if (! app->jspack[packidx])
+	    break;
+	  packidx++;
+	}
+      if ((0 <= packidx) && (packidx < MAX_JOYSTICKS))
+	{
+	  /* valid slot, open device. */
+	  SDL_Joystick * openjs = SDL_JoystickOpen(devnum);
+	  app->jspack[packidx] = openjs;
+	  if (openjs)
+	    {
+	      instid = SDL_JoystickInstanceID(openjs);
+	      SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Added joystick #%d from index %d as handle %d", instid, devnum, packidx);
+	      SDL_snprintf(jsname, sizeof(jsname), "%s", SDL_JoystickName(openjs));
+	    }
+	  else
+	    {
+	      SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Out of memory while tyring to open joystick #%d", devnum);
+	    }
+	}
+      else
+	{
+	  SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Unable to open joystick #%d.", devnum);
+	}
+      break;
+    case SDL_JOYDEVICEREMOVED:
+      action = "REMOVE";
+      /* remove from open devices. */
+      instid = evt->jdevice.which; /* joystick instance id. */
+      /* find matching instid. */
+      for (packidx = 0; packidx < MAX_JOYSTICKS; packidx++)
+	{
+	  if (! app->jspack[packidx])
+	    continue;
+	  SDL_Joystick * doomedjs = app->jspack[packidx];
+	  if (SDL_JoystickInstanceID(doomedjs) == instid)
+	    {
+	      /* joystick number matches; close and remove from handles */
+	      SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Remove joystck handle %d being joystick #%d\n", packidx, instid);
+	      SDL_snprintf(jsname, sizeof(jsname), "%s", SDL_JoystickName(doomedjs));
+	      SDL_JoystickClose(app->jspack[packidx]);
+	      app->jspack[packidx] = NULL;
+	    }
+	}
+      break;
+    }
+  app_fwrite(app, CAT_JOY, "%s: %d = %s", action, instid, jsname);
+  return 0;
 }
 
 
+/* handle CONTROLLERAXISMOTION (SDL Game Controller joystick) event. */
 int app_on_gameaxis (app_t * app, SDL_Event * evt)
 {
   app_fwrite(app, CAT_CONTROLLER, "%d/AXIS/%d: %d",
 	     evt->caxis.which,
 	     evt->caxis.axis,
 	     evt->caxis.value);
+  return 0;
 }
 
+/* handle CONTROLLERBUTTONDOWN (SDL Game Controller button press) event. */
 int app_on_gamebdown (app_t * app, SDL_Event * evt)
 {
   app_fwrite(app, CAT_CONTROLLER, "%d/PRESS: %d",
 	     evt->cbutton.which,
 	     evt->cbutton.button);
+  return 0;
 }
 
+/* handle CONTROLLERBUTTONUP (SDL Game Controller button release) event. */
 int app_on_gamebup (app_t * app, SDL_Event * evt)
 {
   app_fwrite(app, CAT_CONTROLLER, "%d/RELEASE: %d",
 	     evt->cbutton.which,
 	     evt->cbutton.button);
+  return 0;
+}
+
+/* handle SDL Game Controller device events: add, remove, remap. */
+int app_on_gamedev (app_t * app, SDL_Event * evt)
+{
+  const char * action = "?";
+  switch (evt->cdevice.type)
+    {
+    case SDL_CONTROLLERDEVICEADDED:
+      action = "ADD";
+      break;
+    case SDL_CONTROLLERDEVICEREMOVED:
+      action = "REMOVE";
+      break;
+    case SDL_CONTROLLERDEVICEREMAPPED:
+      action = "REMAP";
+      break;
+    }
+  app_fwrite(app, CAT_CONTROLLER, "%s: %d",
+	     action,
+	     evt->cdevice.type);
+  return 0;
 }
 
 
@@ -779,6 +871,10 @@ int app_cycle (app_t * app)
 	  break;
 	case SDL_JOYBUTTONUP:
 	  app_on_joybup(app, evt);
+	  break;
+	case SDL_JOYDEVICEADDED:
+	case SDL_JOYDEVICEREMOVED:
+	  app_on_joydev(app, evt);
 	  break;
 	default:
 	  break;
