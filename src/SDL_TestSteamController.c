@@ -1,4 +1,6 @@
 /* gcc `pkg-config --cflags --libs sdl2 SDL2_ttf`
+
+-Wall -Wextra -pedantic -Wstrict-prototypes
 */
 /*
     Dump SDL events.
@@ -144,8 +146,8 @@ __asm__(
 	".set _binary_ttf0_size, (_binary_ttf0_end - _binary_ttf0_start)\n"
 );
 extern const unsigned char _binary_ttf0_start[];
-extern const unsigned char _binary_ttf0_end[0];
-extern const struct{} _binary_ttf0_size;
+extern const unsigned char _binary_ttf0_end[];  /* no content; address significant. */
+extern const struct{void*_;} _binary_ttf0_size;  /* no content; address significant */
 
 /* Aliases/casts for C semantics. */
 const unsigned char * ttf0_data = _binary_ttf0_start;
@@ -181,6 +183,7 @@ logbuf_t * logbuf_init (logbuf_t * logbuf, int cap)
       cap = MAX_NUMLINES;
     }
   logbuf->cap = cap;
+  return logbuf;
 }
 
 logbuf_t * logbuf_destroy (logbuf_t * logbuf)
@@ -206,6 +209,7 @@ int logbuf_append (logbuf_t * logbuf, const char * buf, int buflen)
       logbuf->head = (logbuf->head + 1) % logbuf->cap;
       logbuf->len--;
     }
+  return 0;
 }
 
 int logbuf_len (logbuf_t * logbuf)
@@ -226,7 +230,7 @@ logentry_t * logbuf_get (logbuf_t * logbuf, int nth)
 }
 
 
-int logbuf_test ()
+int logbuf_test (void)
 {
   logbuf_t _logbuf, *logbuf=&_logbuf;
   logbuf = logbuf_init(logbuf, 3);
@@ -238,16 +242,17 @@ int logbuf_test ()
       int res = SDL_snprintf(msg, sizeof(msg), "Line %d", i);
       logbuf_append(logbuf, msg, res);
     }
-  printf("DUMP:\n");
+  SDL_LogDebug(SDL_LOG_CATEGORY_APPLICATION, "DUMP:");
   for (i = 0; i < 8; i++)
     {
       const logentry_t * entry = logbuf_get(logbuf, i);
       const char * line = entry->line;
       if (line)
 	{
-	  printf(" %d: %s\n", i, line);
+	  SDL_LogDebug(SDL_LOG_CATEGORY_APPLICATION, " %d: %s", i, line);
 	}
     }
+  return 0;
 }
 
 
@@ -292,7 +297,7 @@ SDL_RWops * find_path_to_ttf_file (const char * filename, char * out_buf, int bu
 
 
 
-app_t * app_init (app_t * app)
+app_t * app_init (app_t * app, int argc, char ** argv)
 {
   if (!app)
     {
@@ -303,7 +308,12 @@ app_t * app_init (app_t * app)
       SDL_LogCritical(SDL_LOG_CATEGORY_APPLICATION, "failed malloc in app.new");
       abort();
     }
+  /* Zero out struct. */
   SDL_memset(app, 0, sizeof(*app));
+
+  /* Parse command-line arguments. */
+  (void)argc;
+  (void)argv;
 
   int i;
   for (i = 0; i < MAX_CATEGORIES; i++)
@@ -337,7 +347,7 @@ app_t * app_init (app_t * app)
   /* load fonts. */
   TTF_Init();
 
-  if (ttf0_size)
+  if (ttf0_size > 0)
     {
       /* use built-in font. */
       app->font_io[0] = SDL_RWFromMem((void*)ttf0_data, ttf0_size);
@@ -417,6 +427,7 @@ int app_fwrite (app_t * app, int category, const char * fmt, ...)
 
 int app_on_quit (app_t * app, SDL_Event * evt)
 {
+  (void)evt;  /* deliberately ignoring argument. */
   app_write(app, CAT_MISC, "QUIT");
   app->alive = 0;
   return 0;
@@ -471,6 +482,7 @@ int app_on_window (app_t * app, SDL_Event * evt)
     default:
       break;
     }
+  return 0;
 }
 
 /* handle KEYDOWN (keyboard key press) event. */
@@ -596,6 +608,7 @@ int app_on_joydev (app_t * app, SDL_Event * evt)
 {
   const char * action = "?";
   char jsname[80] = { 0, };
+  int n = 0;
   int packidx = -1; /* opened joystick handles used by this app. */
 
   /* device number, queried from system. */
@@ -660,7 +673,8 @@ int app_on_joydev (app_t * app, SDL_Event * evt)
       break;
     }
   /* TODO: truncate jsname at 12th glyph, not 12th byte. */
-  jsname[11] = 0;
+  if (n > 11)
+    jsname[11] = '\0';
   app_fwrite(app, CAT_JOY, "%s: %d=%s", action, instid, jsname);
   return 0;
 }
@@ -751,7 +765,7 @@ int app_on_gamedev (app_t * app, SDL_Event * evt)
 	  SDL_GameController * opengc = SDL_GameControllerOpen(devnum);
 	  if (opengc)
 	    {
-	      SDL_snprintf(gcname, sizeof(gcname), "%s", SDL_GameControllerName(opengc));
+	      n = SDL_snprintf(gcname, sizeof(gcname), "%s", SDL_GameControllerName(opengc));
 	      instid = SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(opengc));
 	      app->gcpack[packidx] = opengc;
 	      SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Opened game controller (handle=%d, instance=%ld, sysid=%d) \"%s\".", packidx, instid, devnum, gcname);
@@ -777,7 +791,7 @@ int app_on_gamedev (app_t * app, SDL_Event * evt)
 	  /* found for removal. */
 	  SDL_GameController * gc = app->gcpack[packidx];
 	  instid = SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(gc));
-	  SDL_snprintf(gcname, sizeof(gcname), "%s", SDL_GameControllerName(gc));
+	  n = SDL_snprintf(gcname, sizeof(gcname), "%s", SDL_GameControllerName(gc));
 	  SDL_GameControllerClose(gc);
 	  SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Closed game controller %d (js #%ld) \"%s\".", packidx, instid, gcname);
 	  app->gcpack[packidx] = NULL;
@@ -792,7 +806,8 @@ int app_on_gamedev (app_t * app, SDL_Event * evt)
       break;
     }
   /* TODO: truncate gcname at 12th glyph, not 12th byte. */
-  gcname[11] = '\0';
+  if (n > 11)
+    gcname[11] = '\0';
   app_fwrite(app, CAT_CONTROLLER, "%s: %ld=%s",
 	     action,
 	     instid,
@@ -828,7 +843,6 @@ int app_install_text (app_t * app, int decor_idx, TTF_Font * fon, int x, int y, 
     {
       textsurf = TTF_RenderText_Blended(fon, msg, fg);
       blttex = SDL_CreateTextureFromSurface(app->r, textsurf);
-      SDL_Rect dst = { x, y, textsurf->w, textsurf->h };
       app->decor[decor_idx].x = x;
       app->decor[decor_idx].y = y;
       app->decor[decor_idx].surf = textsurf;
@@ -919,6 +933,8 @@ int app_cycle_gfx (app_t * app)
     }
 
   SDL_RenderPresent(app->r);
+
+  return 0;
 }
 
 /* One step of main loop. */
@@ -1025,9 +1041,9 @@ int app_main (app_t * app)
 
 app_t _app, *app=&_app;
 
-int main (int argc, const char *argv[])
+int main (int argc, char *argv[])
 {
-  app_init(app);
+  app_init(app, argc, argv);
   app_main(app);
   app_destroy(app);
   return 0;
