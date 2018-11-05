@@ -39,22 +39,24 @@ MISC       | KEYB      | MOUSE     | JOY      | CONTROLLER
 */
 
 
+#define APP_TITLE "SDL_DumpEvents"
+/* Default font file name. */
+#define DEFAULT_FONT_FILENAME "FreeMono.ttf"
+#define DIR_SEPARATOR "/"
+
 /* Maximum length of one log line, bytes. */
 #define MAX_LINELENGTH 256
-/* Maximum number of log lines per scope. */
+/* Maximum number of log lines per category. */
 #define MAX_NUMLINES 32
-/* Scope columns. */
-#define MAX_SCOPES 5
+/* Category columns. */
+#define MAX_CATEGORIES 5
+/* Max number of joystick devices to recognize. */
 #define MAX_JOYSTICKS 8
 
 /* Default window size. */
 #define DEFAULT_WIDTH 1280
 #define DEFAULT_HEIGHT 720
 
-/* Default font file name. */
-#define DEFAULT_FONT_FILENAME "FreeMono.ttf"
-
-#define DIR_SEPARATOR "/"
 
 
 /* major SDL Event type categorize for display:
@@ -65,11 +67,12 @@ MISC       | KEYB      | MOUSE     | JOY      | CONTROLLER
   + SDL Controller events.
 */
 enum {
-    SCOPE_MISC = 0,
-    SCOPE_KEYB,
-    SCOPE_MOUSE,
-    SCOPE_JOY,
-    SCOPE_CONTROLLER,
+    CAT_NONE = 0,
+    CAT_MISC,
+    CAT_KEYB,
+    CAT_MOUSE,
+    CAT_JOY,
+    CAT_CONTROLLER,
 };
 
 
@@ -120,7 +123,7 @@ typedef struct app_s {
     gfxdecor_t decor[30];
 
     /* A logbuf instance per column. */
-    logbuf_t logbuf[MAX_SCOPES];
+    logbuf_t logbuf[MAX_CATEGORIES];
 
     char title0[255];
 } app_t;
@@ -155,7 +158,7 @@ const unsigned char * ttf0_data_end = ttf0_data;
 
 
 
-const char BANNER[] = "SDL_TestSteamController - add as Non-Steam Game, run from Big Picture Mode";
+const char BANNER[] = APP_TITLE " - add as Non-Steam Game, run from Big Picture Mode";
 
 
 logbuf_t * logbuf_init (logbuf_t * logbuf, int cap)
@@ -303,7 +306,7 @@ app_t * app_init (app_t * app)
 
   int i;
 
-  for (i = 0; i < MAX_SCOPES; i++)
+  for (i = 0; i < MAX_CATEGORIES; i++)
     {
       logbuf_init(app->logbuf + i, 0);
     }
@@ -311,7 +314,7 @@ app_t * app_init (app_t * app)
   SDL_Init(SDL_INIT_EVERYTHING);
 
   /* open main window. */
-  SDL_snprintf(app->title0, sizeof(app->title0), "SDL_TestSteamController");
+  SDL_snprintf(app->title0, sizeof(app->title0), APP_TITLE);
   app->width = DEFAULT_WIDTH;
   app->height = DEFAULT_HEIGHT;
   app->x0 = SDL_WINDOWPOS_UNDEFINED;
@@ -389,28 +392,28 @@ app_t * app_destroy (app_t * app)
 }
 
 
-int app_write (app_t * app, int scope, const char * msg)
+int app_write (app_t * app, int category, const char * msg)
 {
   int n;
   n = SDL_strlen(msg)+1;
-  logbuf_append(app->logbuf + scope, msg, n);
+  logbuf_append(app->logbuf + category, msg, n);
   return 0;
 }
 
-int app_vfwrite (app_t * app, int scope, const char * fmt, va_list vp)
+int app_vfwrite (app_t * app, int category, const char * fmt, va_list vp)
 {
   char buf[MAX_LINELENGTH];
   int res = SDL_vsnprintf(buf, sizeof(buf), fmt, vp);
-  app_write(app, scope, buf);
+  app_write(app, category, buf);
   return res;
 }
 
-int app_fwrite (app_t * app, int scope, const char * fmt, ...)
+int app_fwrite (app_t * app, int category, const char * fmt, ...)
 {
   int retval = 0;
   va_list vp;
   va_start(vp, fmt);
-  retval = app_vfwrite(app, scope, fmt, vp);
+  retval = app_vfwrite(app, category, fmt, vp);
   va_end(vp);
   return retval;
 }
@@ -418,7 +421,7 @@ int app_fwrite (app_t * app, int scope, const char * fmt, ...)
 
 int app_on_quit (app_t * app, SDL_Event * evt)
 {
-  app_write(app, SCOPE_MISC, "QUIT");
+  app_write(app, CAT_MISC, "QUIT");
   app->alive = 0;
   return 0;
 }
@@ -428,46 +431,46 @@ int app_on_window (app_t * app, SDL_Event * evt)
   switch (evt->window.event)
     {
     case SDL_WINDOWEVENT_SHOWN:
-      app_write(app, SCOPE_MISC, "WIN SHOW");
+      app_write(app, CAT_MISC, "WIN SHOW");
       break;
     case SDL_WINDOWEVENT_HIDDEN:
-      app_write(app, SCOPE_MISC, "WIN HIDE");
+      app_write(app, CAT_MISC, "WIN HIDE");
       break;
     case SDL_WINDOWEVENT_EXPOSED:
-      app_write(app, SCOPE_MISC, "WIN EXPOSE");
+      app_write(app, CAT_MISC, "WIN EXPOSE");
       break;
     case SDL_WINDOWEVENT_MOVED:
-      app_write(app, SCOPE_MISC, "WIN MOVE");
+      app_write(app, CAT_MISC, "WIN MOVE");
       break;
     case SDL_WINDOWEVENT_RESIZED:
-      app_write(app, SCOPE_MISC, "WIN RESIZE");
+      app_write(app, CAT_MISC, "WIN RESIZE");
       break;
     case SDL_WINDOWEVENT_SIZE_CHANGED:
-      app_write(app, SCOPE_MISC, "WIN SIZE CHANGE");
+      app_write(app, CAT_MISC, "WIN SIZE CHANGE");
       break;
     case SDL_WINDOWEVENT_MINIMIZED:
-      app_write(app, SCOPE_MISC, "WIN ICONIFY");
+      app_write(app, CAT_MISC, "WIN ICONIFY");
       break;
     case SDL_WINDOWEVENT_MAXIMIZED:
-      app_write(app, SCOPE_MISC, "WIN MAXIMIZE");
+      app_write(app, CAT_MISC, "WIN MAXIMIZE");
       break;
     case SDL_WINDOWEVENT_RESTORED:
-      app_write(app, SCOPE_MISC, "WIN RESTORED");
+      app_write(app, CAT_MISC, "WIN RESTORED");
       break;
     case SDL_WINDOWEVENT_ENTER:
-      app_write(app, SCOPE_MISC, "WIN ENTER");
+      app_write(app, CAT_MISC, "WIN ENTER");
       break;
     case SDL_WINDOWEVENT_LEAVE:
-      app_write(app, SCOPE_MISC, "WIN LEAVE");
+      app_write(app, CAT_MISC, "WIN LEAVE");
       break;
     case SDL_WINDOWEVENT_FOCUS_GAINED:
-      app_write(app, SCOPE_MISC, "WIN FOCUS IN");
+      app_write(app, CAT_MISC, "WIN FOCUS IN");
       break;
     case SDL_WINDOWEVENT_FOCUS_LOST:
-      app_write(app, SCOPE_MISC, "WIN FOCUS OUT");
+      app_write(app, CAT_MISC, "WIN FOCUS OUT");
       break;
     case SDL_WINDOWEVENT_CLOSE:
-      app_write(app, SCOPE_MISC, "WIN CLOSE");
+      app_write(app, CAT_MISC, "WIN CLOSE");
       break;
     default:
       break;
@@ -486,7 +489,7 @@ int app_on_keydown (app_t * app, SDL_Event * evt)
       SDL_snprintf(altname, sizeof(altname), "(%d)", evt->key.keysym.sym);
       keyname = altname;
     }
-  app_fwrite(app, SCOPE_KEYB, "PRESS: %s", keyname);
+  app_fwrite(app, CAT_KEYB, "PRESS: %s", keyname);
   return 0;
 }
 
@@ -499,7 +502,7 @@ int app_on_keyup (app_t * app, SDL_Event * evt)
       SDL_snprintf(altname, sizeof(altname), "(%d)", evt->key.keysym.sym);
       keyname = altname;
     }
-  app_fwrite(app, SCOPE_KEYB, "RELEASE: %s", keyname);
+  app_fwrite(app, CAT_KEYB, "RELEASE: %s", keyname);
   if (evt->key.keysym.sym == SDLK_ESCAPE)
     {
       app->alive = 0;
@@ -509,7 +512,7 @@ int app_on_keyup (app_t * app, SDL_Event * evt)
 
 int app_on_mousemove (app_t * app, SDL_Event * evt)
 {
-  app_fwrite(app, SCOPE_MOUSE, "MV: %+d%+d:(%d,%d)",
+  app_fwrite(app, CAT_MOUSE, "MV: %+d%+d:(%d,%d)",
 	     evt->motion.xrel,
 	     evt->motion.yrel,
 	     evt->motion.x,
@@ -520,26 +523,26 @@ int app_on_mousemove (app_t * app, SDL_Event * evt)
 
 int app_on_mousebdown (app_t * app, SDL_Event * evt)
 {
-  app_fwrite(app, SCOPE_MOUSE, "PRESS: %d", evt->button.button);
+  app_fwrite(app, CAT_MOUSE, "PRESS: %d", evt->button.button);
   return 0;
 }
 
 int app_on_mousebup (app_t * app, SDL_Event * evt)
 {
-  app_fwrite(app, SCOPE_MOUSE, "RELEASE: %d", evt->button.button);
+  app_fwrite(app, CAT_MOUSE, "RELEASE: %d", evt->button.button);
   return 0;
 }
 
 int app_on_mousewheel (app_t * app, SDL_Event * evt)
 {
-  app_fwrite(app, SCOPE_MOUSE, "WHEEL: %+d%+d", evt->wheel.x, evt->wheel.y);
+  app_fwrite(app, CAT_MOUSE, "WHEEL: %+d%+d", evt->wheel.x, evt->wheel.y);
   return 0;
 }
 
 
 int app_on_joyaxis (app_t * app, SDL_Event * evt)
 {
-  app_fwrite(app, SCOPE_JOY, "%d/AXIS/%d: %d",
+  app_fwrite(app, CAT_JOY, "%d/AXIS/%d: %d",
 	     evt->jaxis.which,
 	     evt->jaxis.axis,
 	     evt->jaxis.value);
@@ -548,7 +551,7 @@ int app_on_joyaxis (app_t * app, SDL_Event * evt)
 
 int app_on_joyhat (app_t * app, SDL_Event * evt)
 {
-  app_fwrite(app, SCOPE_JOY, "%d/HAT/%d: %d",
+  app_fwrite(app, CAT_JOY, "%d/HAT/%d: %d",
 	     evt->jhat.which,
 	     evt->jhat.hat,
 	     evt->jhat.value);
@@ -557,7 +560,7 @@ int app_on_joyhat (app_t * app, SDL_Event * evt)
 
 int app_on_joyball (app_t * app, SDL_Event * evt)
 {
-  app_fwrite(app, SCOPE_JOY, "%d/BALL/%d: %+d%+d",
+  app_fwrite(app, CAT_JOY, "%d/BALL/%d: %+d%+d",
 	     evt->jball.which,
 	     evt->jball.ball,
 	     evt->jball.xrel,
@@ -567,7 +570,7 @@ int app_on_joyball (app_t * app, SDL_Event * evt)
 
 int app_on_joybdown (app_t * app, SDL_Event * evt)
 {
-  app_fwrite(app, SCOPE_JOY, "%d/PRESS: %d",
+  app_fwrite(app, CAT_JOY, "%d/PRESS: %d",
 	     evt->jbutton.which,
 	     evt->jbutton.button);
   return 0;
@@ -575,7 +578,7 @@ int app_on_joybdown (app_t * app, SDL_Event * evt)
 
 int app_on_joybup (app_t * app, SDL_Event * evt)
 {
-  app_fwrite(app, SCOPE_JOY, "%d/RELEASE: %d",
+  app_fwrite(app, CAT_JOY, "%d/RELEASE: %d",
 	     evt->jbutton.which,
 	     evt->jbutton.button);
   return 0;
@@ -588,13 +591,13 @@ int app_on_joydev (app_t * app, SDL_Event * evt)
     action = "ADD";
   else if (evt->jdevice.type == SDL_JOYDEVICEREMOVED)
     action = "REMOVE";
-  app_fwrite(app, SCOPE_JOY, "%s: %d", evt->jdevice.which);
+  app_fwrite(app, CAT_JOY, "%s: %d", evt->jdevice.which);
 }
 
 
 int app_on_gameaxis (app_t * app, SDL_Event * evt)
 {
-  app_fwrite(app, SCOPE_CONTROLLER, "%d/AXIS/%d: %d",
+  app_fwrite(app, CAT_CONTROLLER, "%d/AXIS/%d: %d",
 	     evt->caxis.which,
 	     evt->caxis.axis,
 	     evt->caxis.value);
@@ -602,14 +605,14 @@ int app_on_gameaxis (app_t * app, SDL_Event * evt)
 
 int app_on_gamebdown (app_t * app, SDL_Event * evt)
 {
-  app_fwrite(app, SCOPE_CONTROLLER, "%d/PRESS: %d",
+  app_fwrite(app, CAT_CONTROLLER, "%d/PRESS: %d",
 	     evt->cbutton.which,
 	     evt->cbutton.button);
 }
 
 int app_on_gamebup (app_t * app, SDL_Event * evt)
 {
-  app_fwrite(app, SCOPE_CONTROLLER, "%d/RELEASE: %d",
+  app_fwrite(app, CAT_CONTROLLER, "%d/RELEASE: %d",
 	     evt->cbutton.which,
 	     evt->cbutton.button);
 }
@@ -676,41 +679,41 @@ int app_cycle_gfx (app_t * app)
   app_printxy(app, app->fonts[2], 0, 20, lenbuf);
   */
 
-  // the scopes.
-  const char * scopelabel[MAX_SCOPES] = {
+  /* the categories */
+  const char * catlabel[MAX_CATEGORIES] = {
       "MISC",
       "KEYB",
       "MOUSE",
       "JOY",
       "SDL_CONTROLLER",
   };
-  int scopenum;
+  int catnum;
   int x0 = 0;
   int y0 = 40;
   int x, y;
-  for (scopenum = 0; scopenum < MAX_SCOPES; scopenum++)
+  for (catnum = 0; catnum < MAX_CATEGORIES; catnum++)
     {
-      x = x0 + (scopenum * app->width / MAX_SCOPES);
+      x = x0 + (catnum * app->width / MAX_CATEGORIES);
       y = y0;
-      if (scopenum > 0)
+      if (catnum > 0)
 	{
 	  // separator line.
 	  SDL_RenderDrawLine(app->r, x-4, y, x-4, app->height);
 	}
-      //app_printxy(app, app->fonts[2], x, y, scopelabel[scopenum]);
-      app_install_text(app, scopenum+1, app->fonts[2], x, y, scopelabel[scopenum]);
+      //app_printxy(app, app->fonts[2], x, y, catlabel[catnum]);
+      app_install_text(app, catnum+1, app->fonts[2], x, y, catlabel[catnum]);
       int linenum;
       for (linenum = 0; linenum < MAX_NUMLINES; linenum++)
 	{
 	  y += 20;
 	  /*
-	  const char * line = logbuf_get(app->logbuf+scopenum, linenum);
+	  const char * line = logbuf_get(app->logbuf+catnum, linenum);
 	  if ((line != NULL) && *line)
 	    {
 	      app_printxy(app, app->fonts[2], x, y, line);
 	    }
 	    */
-	  logentry_t * entry = logbuf_get(app->logbuf + scopenum, linenum);
+	  logentry_t * entry = logbuf_get(app->logbuf + catnum, linenum);
 	  if (!entry) continue;
 	  SDL_Texture * blttex = entry->tex;
 	  if (!blttex)
@@ -720,7 +723,7 @@ int app_cycle_gfx (app_t * app)
 	      const char * msg = entry ? entry->line : NULL;
 	      if (msg && *msg)
 		{
-		  //printf("create tex %d,%d\n", scopenum, linenum);
+		  //printf("create tex %d,%d\n", catnum, linenum);
 		  SDL_Surface * textsurf = TTF_RenderText_Blended(fon, msg, fg);
 		  blttex = SDL_CreateTextureFromSurface(app->r, textsurf);
 		  entry->surf = textsurf;
@@ -811,7 +814,7 @@ int app_main (app_t * app)
 	  char buf[64];
 	  SDL_snprintf(buf, sizeof(buf), "Tick %d (+%d)", k,
 		       SDL_GetTicks()-lasttick);
-	  app_write(app, SCOPE_MISC, buf);
+	  app_write(app, CAT_MISC, buf);
 	  lasttick = SDL_GetTicks();
 	}
       n++;
