@@ -709,28 +709,28 @@ int app_on_window (app_t * app, SDL_Event * evt)
   switch (evt->window.event)
     {
     case SDL_WINDOWEVENT_SHOWN:
-      app_write(app, CAT_MISC, "WIN SHOW");
+      app_write(app, CAT_MISC, "WIN SHOWN");
       break;
     case SDL_WINDOWEVENT_HIDDEN:
-      app_write(app, CAT_MISC, "WIN HIDE");
+      app_write(app, CAT_MISC, "WIN HIDDEN");
       break;
     case SDL_WINDOWEVENT_EXPOSED:
-      app_write(app, CAT_MISC, "WIN EXPOSE");
+      app_write(app, CAT_MISC, "WIN EXPOSED");
       break;
     case SDL_WINDOWEVENT_MOVED:
-      app_write(app, CAT_MISC, "WIN MOVE");
+      app_write(app, CAT_MISC, "WIN MOVED");
       break;
     case SDL_WINDOWEVENT_RESIZED:
-      app_write(app, CAT_MISC, "WIN RESIZE");
+      app_write(app, CAT_MISC, "WIN RESIZED");
       break;
     case SDL_WINDOWEVENT_SIZE_CHANGED:
-      app_write(app, CAT_MISC, "WIN SIZE CHANGE");
+      app_write(app, CAT_MISC, "WIN SIZE_CHANGED");
       break;
     case SDL_WINDOWEVENT_MINIMIZED:
-      app_write(app, CAT_MISC, "WIN ICONIFY");
+      app_write(app, CAT_MISC, "WIN MINIMIZED");
       break;
     case SDL_WINDOWEVENT_MAXIMIZED:
-      app_write(app, CAT_MISC, "WIN MAXIMIZE");
+      app_write(app, CAT_MISC, "WIN MAXIMIZED");
       break;
     case SDL_WINDOWEVENT_RESTORED:
       app_write(app, CAT_MISC, "WIN RESTORED");
@@ -742,10 +742,10 @@ int app_on_window (app_t * app, SDL_Event * evt)
       app_write(app, CAT_MISC, "WIN LEAVE");
       break;
     case SDL_WINDOWEVENT_FOCUS_GAINED:
-      app_write(app, CAT_MISC, "WIN FOCUS IN");
+      app_write(app, CAT_MISC, "WIN FOCUS_GAINED");
       break;
     case SDL_WINDOWEVENT_FOCUS_LOST:
-      app_write(app, CAT_MISC, "WIN FOCUS OUT");
+      app_write(app, CAT_MISC, "WIN FOCUS_LOST");
       break;
     case SDL_WINDOWEVENT_CLOSE:
       app_write(app, CAT_MISC, "WIN CLOSE");
