@@ -49,8 +49,6 @@ MISC       | KEYB      | MOUSE     | JOY      | CONTROLLER
 #define MAX_LINELENGTH 256
 /* Maximum number of log lines per category. */
 #define MAX_NUMLINES 32
-/* Category columns. */
-#define MAX_CATEGORIES 5
 /* Max number of joystick devices to recognize. */
 #define MAX_JOYSTICKS 8
 
@@ -68,12 +66,13 @@ MISC       | KEYB      | MOUSE     | JOY      | CONTROLLER
   + SDL Controller events.
 */
 enum {
-    CAT_NONE = 0,
     CAT_MISC,
     CAT_KEYB,
     CAT_MOUSE,
     CAT_JOY,
     CAT_CONTROLLER,
+
+    MAX_CATEGORIES
 };
 
 
@@ -187,7 +186,7 @@ logbuf_t * logbuf_destroy (logbuf_t * logbuf)
   return logbuf;
 }
 
-// append line to buffer.
+/* append line to buffer. */
 int logbuf_append (logbuf_t * logbuf, const char * buf, int buflen)
 {
   int n = (logbuf->head + logbuf->len) % logbuf->cap;
@@ -221,7 +220,6 @@ logentry_t * logbuf_get (logbuf_t * logbuf, int nth)
   int ofs = logbuf->head + nth;
   if (ofs >= logbuf->cap)
     ofs %= logbuf->cap;
-  //int ofs = (logbuf->head + nth) % logbuf->cap;
   return logbuf->buf + ofs;
 }
 
@@ -658,9 +656,6 @@ int app_install_text (app_t * app, int decor_idx, TTF_Font * fon, int x, int y, 
   SDL_Rect dst = { x, y, textsurf->w, textsurf->h };
   SDL_RenderCopy(app->r, blttex, NULL, &dst);
 
-//  SDL_DestroyTexture(blttex);
-//  SDL_FreeSurface(textsurf);
-
   return 0;
 }
 
@@ -671,17 +666,13 @@ int app_cycle_gfx (app_t * app)
 
   SDL_SetRenderDrawColor(app->r, 0xff,0xff,0xff,0xff);
 
-  // title
+  /* banner text at top of surface. */
   app_install_text(app, 0, app->fonts[2], 0, 0, BANNER);
 
-  /*
-  char lenbuf[64];
-  SDL_snprintf(lenbuf, sizeof(lenbuf), "len(logbuf) = %d", logbuf_len(app->logbuf));
-  app_printxy(app, app->fonts[2], 0, 20, lenbuf);
-  */
+  SDL_LogDebug(SDL_LOG_CATEGORY_APPLICATION, "len(logbuf) = %d", logbuf_len(app->logbuf));
 
-  /* the categories */
-  const char * catlabel[MAX_CATEGORIES] = {
+  /* the categories drawn */
+  static const char * catlabel[MAX_CATEGORIES] = {
       "MISC",
       "KEYB",
       "MOUSE",
@@ -701,30 +692,27 @@ int app_cycle_gfx (app_t * app)
 	  // separator line.
 	  SDL_RenderDrawLine(app->r, x-4, y, x-4, app->height);
 	}
-      //app_printxy(app, app->fonts[2], x, y, catlabel[catnum]);
+
+      /* Place category name as column header. */
       app_install_text(app, catnum+1, app->fonts[2], x, y, catlabel[catnum]);
+
+      /* Sync rendered textsurf with log lines for this category. */
       int linenum;
       for (linenum = 0; linenum < MAX_NUMLINES; linenum++)
 	{
 	  y += 20;
-	  /*
-	  const char * line = logbuf_get(app->logbuf+catnum, linenum);
-	  if ((line != NULL) && *line)
-	    {
-	      app_printxy(app, app->fonts[2], x, y, line);
-	    }
-	    */
 	  logentry_t * entry = logbuf_get(app->logbuf + catnum, linenum);
 	  if (!entry) continue;
 	  SDL_Texture * blttex = entry->tex;
 	  if (!blttex)
 	    {
+	      /* generate corresponding rendered textsurf. */
 	      SDL_Color fg = { 0xff, 0xff, 0xff, 0xff };
 	      TTF_Font * fon = app->fonts[2];
 	      const char * msg = entry ? entry->line : NULL;
 	      if (msg && *msg)
 		{
-		  //printf("create tex %d,%d\n", catnum, linenum);
+		  SDL_LogDebug(SDL_LOG_CATEGORY_APPLICATION, "create text %d,%d\n", catnum, linenum);
 		  SDL_Surface * textsurf = TTF_RenderText_Blended(fon, msg, fg);
 		  blttex = SDL_CreateTextureFromSurface(app->r, textsurf);
 		  entry->surf = textsurf;
@@ -733,6 +721,7 @@ int app_cycle_gfx (app_t * app)
 	    }
 	  if (blttex)
 	    {
+	      /* render corresponding textsurf. */
 	      Uint32 fmt = 0;
 	      int access = 0, w = 0, h = 0;
 	      SDL_QueryTexture(blttex, &fmt, &access, &w, &h);
@@ -811,10 +800,9 @@ int app_main (app_t * app)
       if ((n % divisor) == 0)
 	{
 	  int k = (n / divisor);
-	  //printf("tick %d\n", k);
 	  char buf[64];
-	  SDL_snprintf(buf, sizeof(buf), "Tick %d (+%d)", k,
-		       SDL_GetTicks()-lasttick);
+	  int delta = SDL_GetTicks() - lasttick;
+	  SDL_snprintf(buf, sizeof(buf), "Tick %d (+%d)", k, delta);
 	  app_write(app, CAT_MISC, buf);
 	  lasttick = SDL_GetTicks();
 	}
@@ -830,7 +818,6 @@ app_t _app, *app=&_app;
 
 int main (int argc, const char *argv[])
 {
-//  logbuf_test();
   app_init(app);
   app_main(app);
   app_destroy(app);
