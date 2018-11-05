@@ -51,6 +51,8 @@ MISC       | KEYB      | MOUSE     | JOY      | CONTROLLER
 #define MAX_NUMLINES 32
 /* Max number of joystick devices to recognize. */
 #define MAX_JOYSTICKS 8
+/* Max number of game controller (gamepad) devices to recognize. */
+#define MAX_GAMEPADS 8
 
 /* Default window size. */
 #define DEFAULT_WIDTH 1280
@@ -116,8 +118,8 @@ typedef struct app_s {
 
     SDL_RWops * font_io[1];  /* SDL_RWops* type for TTF (file). */
     TTF_Font * fonts[4];
-    int njs;  // number of joysticks opened.
     SDL_Joystick * jspack[MAX_JOYSTICKS];
+    SDL_GameController * gcpack[MAX_GAMEPADS];
 
     /* Persistent decorations. */
     gfxdecor_t decor[30];
@@ -304,13 +306,17 @@ app_t * app_init (app_t * app)
   SDL_memset(app, 0, sizeof(*app));
 
   int i;
-
   for (i = 0; i < MAX_CATEGORIES; i++)
     {
       logbuf_init(app->logbuf + i, 0);
     }
 
   SDL_Init(SDL_INIT_EVERYTHING);
+
+  /* Enable joystick events. */
+  SDL_JoystickEventState(SDL_ENABLE);
+  /* Enable game controller events. */
+  SDL_GameControllerEventState(SDL_ENABLE);
 
   /* open main window. */
   SDL_snprintf(app->title0, sizeof(app->title0), APP_TITLE);
@@ -619,12 +625,12 @@ int app_on_joydev (app_t * app, SDL_Event * evt)
 	  if (openjs)
 	    {
 	      instid = SDL_JoystickInstanceID(openjs);
-	      SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Added joystick #%d from index %d as handle %d", instid, devnum, packidx);
 	      SDL_snprintf(jsname, sizeof(jsname), "%s", SDL_JoystickName(openjs));
+	      SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Opened joystick handle %d as instance #%d from index %d \"%s\".", packidx, instid, devnum, jsname);
 	    }
 	  else
 	    {
-	      SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Out of memory while tyring to open joystick #%d", devnum);
+	      SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Out of handles while tyring to open joystick #%d", devnum);
 	    }
 	}
       else
@@ -645,15 +651,17 @@ int app_on_joydev (app_t * app, SDL_Event * evt)
 	  if (SDL_JoystickInstanceID(doomedjs) == instid)
 	    {
 	      /* joystick number matches; close and remove from handles */
-	      SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Remove joystck handle %d being joystick #%d\n", packidx, instid);
 	      SDL_snprintf(jsname, sizeof(jsname), "%s", SDL_JoystickName(doomedjs));
 	      SDL_JoystickClose(app->jspack[packidx]);
 	      app->jspack[packidx] = NULL;
+	      SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Closed joystck handle %d being joystick #%d \"%s\"", packidx, instid, jsname);
 	    }
 	}
       break;
     }
-  app_fwrite(app, CAT_JOY, "%s: %d = %s", action, instid, jsname);
+  /* TODO: truncate jsname at 12th glyph, not 12th byte. */
+  jsname[11] = 0;
+  app_fwrite(app, CAT_JOY, "%s: %d=%s", action, instid, jsname);
   return 0;
 }
 
@@ -686,30 +694,115 @@ int app_on_gamebup (app_t * app, SDL_Event * evt)
   return 0;
 }
 
+/* utility function: pick first index in array of pointers fulfilling a criteria (default is-NULL, for finding an empty slot). */
+static
+int find_slot (int packcount, void ** pack, int (*predicate)(void*, void*), void * userdata)
+{
+  int i = 0;
+  for (i = 0; i < packcount; i++)
+    {
+      if (predicate)
+	{
+	  /* delegate to predicate function. */
+	  if (predicate(pack[i], userdata))
+	    break;
+	}
+      else
+	{
+	  /* default predicate: compare to NULL */
+	  if (pack[i] == NULL)
+	    break;
+	}
+    }
+  if (i < packcount)
+    return i;
+  return -1;
+}
+
+static
+int gamedev_instanceid_eq_p (void * obj, void * userdata)
+{
+  SDL_GameController * gc = (SDL_GameController*)obj;
+  int cmp = (long)userdata;
+  if (obj == NULL) return 0;
+  return (cmp == SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(gc)));
+}
+
 /* handle SDL Game Controller device events: add, remove, remap. */
 int app_on_gamedev (app_t * app, SDL_Event * evt)
 {
   const char * action = "?";
+  char gcname[80] = { 0, };
+  int n = 0;
+  int devnum = -1;
+  long instid = -1;
+  int packidx = -1;
+
   switch (evt->cdevice.type)
     {
     case SDL_CONTROLLERDEVICEADDED:
       action = "ADD";
+      /* find a slot. */
+      packidx = find_slot(MAX_GAMEPADS, (void**)(app->gcpack), NULL, NULL);
+      if (packidx > -1)
+	{
+	  /* found slot; open device. */
+	  devnum = evt->cdevice.which;
+	  SDL_GameController * opengc = SDL_GameControllerOpen(devnum);
+	  if (opengc)
+	    {
+	      SDL_snprintf(gcname, sizeof(gcname), "%s", SDL_GameControllerName(opengc));
+	      instid = SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(opengc));
+	      app->gcpack[packidx] = opengc;
+	      SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Opened game controller (handle=%d, instance=%ld, sysid=%d) \"%s\".", packidx, instid, devnum, gcname);
+	    }
+	  else
+	    {
+	      SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Unable to open game controller #%d.n", devnum);
+	    }
+	}
+      else
+	{
+	  SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Out of handles trying to open game controller #%d.", devnum);
+	}
+
       break;
     case SDL_CONTROLLERDEVICEREMOVED:
       action = "REMOVE";
+      instid = evt->cdevice.which;
+      packidx = find_slot(MAX_GAMEPADS, (void**)(app->gcpack),
+			  gamedev_instanceid_eq_p, (void*)instid);
+      if (packidx > -1)
+	{
+	  /* found for removal. */
+	  SDL_GameController * gc = app->gcpack[packidx];
+	  instid = SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(gc));
+	  SDL_snprintf(gcname, sizeof(gcname), "%s", SDL_GameControllerName(gc));
+	  SDL_GameControllerClose(gc);
+	  SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Closed game controller %d (js #%ld) \"%s\".", packidx, instid, gcname);
+	  app->gcpack[packidx] = NULL;
+	}
       break;
     case SDL_CONTROLLERDEVICEREMAPPED:
       action = "REMAP";
+      instid = evt->cdevice.which;
+      packidx = find_slot(MAX_GAMEPADS, (void**)(app->gcpack),
+			  gamedev_instanceid_eq_p, (void*)instid);
+      SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Remapping on game controller %d.", packidx);
       break;
     }
-  app_fwrite(app, CAT_CONTROLLER, "%s: %d",
+  /* TODO: truncate gcname at 12th glyph, not 12th byte. */
+  gcname[11] = '\0';
+  app_fwrite(app, CAT_CONTROLLER, "%s: %ld=%s",
 	     action,
-	     evt->cdevice.type);
+	     instid,
+	     gcname);
   return 0;
 }
 
 
 
+/* Render text at a location for the current presentation cycle (frame). */
 int app_printxy (app_t * app, TTF_Font * fon, int x, int y, const char * msg)
 {
   SDL_Color fg = { 0xff, 0xff, 0xff, 0xff };
@@ -724,6 +817,7 @@ int app_printxy (app_t * app, TTF_Font * fon, int x, int y, const char * msg)
   return 0;
 }
 
+/* Generate and store text at a location to be rendered across many presentation cycles. */
 int app_install_text (app_t * app, int decor_idx, TTF_Font * fon, int x, int y, const char * msg)
 {
   SDL_Color fg = { 0xff, 0xff, 0xff, 0xff };
@@ -751,6 +845,7 @@ int app_install_text (app_t * app, int decor_idx, TTF_Font * fon, int x, int y, 
   return 0;
 }
 
+/* Handle all graphics output. */
 int app_cycle_gfx (app_t * app)
 {
   SDL_SetRenderDrawColor(app->r, 0,0,0,0);
@@ -804,7 +899,7 @@ int app_cycle_gfx (app_t * app)
 	      const char * msg = entry ? entry->line : NULL;
 	      if (msg && *msg)
 		{
-		  SDL_LogDebug(SDL_LOG_CATEGORY_APPLICATION, "create text %d,%d\n", catnum, linenum);
+		  SDL_LogDebug(SDL_LOG_CATEGORY_APPLICATION, "create text %d,%d", catnum, linenum);
 		  SDL_Surface * textsurf = TTF_RenderText_Blended(fon, msg, fg);
 		  blttex = SDL_CreateTextureFromSurface(app->r, textsurf);
 		  entry->surf = textsurf;
@@ -826,6 +921,7 @@ int app_cycle_gfx (app_t * app)
   SDL_RenderPresent(app->r);
 }
 
+/* One step of main loop. */
 int app_cycle (app_t * app)
 {
   SDL_Event _evt, *evt=&_evt;
@@ -876,6 +972,20 @@ int app_cycle (app_t * app)
 	case SDL_JOYDEVICEREMOVED:
 	  app_on_joydev(app, evt);
 	  break;
+	case SDL_CONTROLLERAXISMOTION:
+	  app_on_gameaxis(app, evt);
+	  break;
+	case SDL_CONTROLLERBUTTONDOWN:
+	  app_on_gamebdown(app, evt);
+	  break;
+	case SDL_CONTROLLERBUTTONUP:
+	  app_on_gamebup(app, evt);
+	  break;
+	case SDL_CONTROLLERDEVICEADDED:
+	case SDL_CONTROLLERDEVICEREMOVED:
+	case SDL_CONTROLLERDEVICEREMAPPED:
+	  app_on_gamedev(app, evt);
+	  break;
 	default:
 	  break;
 	}
@@ -891,6 +1001,8 @@ int app_main (app_t * app)
   int n = 0;
   int lasttick = 0;
   const int divisor = 500;
+
+  /* main loop */
   while (app->alive != 0)
     {
       if ((n % divisor) == 0)
@@ -906,6 +1018,7 @@ int app_main (app_t * app)
 
       app_cycle(app);
     }
+
   return 0;
 }
 
