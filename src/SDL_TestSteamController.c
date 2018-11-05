@@ -39,6 +39,7 @@ MISC       | KEYB      | MOUSE     | JOY      | CONTROLLER
 */
 
 
+/* Application title - used in title bar and textual references to self. */
 #define APP_TITLE "SDL_DumpEvents"
 /* Default font file name. */
 #define DEFAULT_FONT_FILENAME "FreeMono.ttf"
