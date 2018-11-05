@@ -67,9 +67,9 @@ MISC       | KEYB      | MOUSE     | JOY      | CONTROLLER
 #define DEFAULT_MAPPING_ENVVAR "SDL_DUMPEVENTS_MAPPING"
 
 /* Fade effect parameters. */
-#define AGE_FADE_PERIOD 1000
-#define AGE_FADE_ALPHA_START 255
-#define AGE_FADE_ALPHA_END 63
+#define DEFAULT_AGE_FADE_PERIOD 1000
+#define DEFAULT_AGE_FADE_ALPHA_START 255
+#define DEFAULT_AGE_FADE_ALPHA_END 127
 
 
 
@@ -130,6 +130,9 @@ typedef struct app_s {
     int logginess;
     enum mapping_protocol_e mapping_protocol;
     const char * mapping_locator;
+    long age_fade_period;
+    int age_fade_start;
+    int age_fade_end;
 
     int width;
     int height;
@@ -590,6 +593,10 @@ app_t * app_init (app_t * app, int argc, char ** argv)
 			    app->wflags);
   SDL_LogDebug(SDL_LOG_CATEGORY_APPLICATION, "Opened window %dx%d", app->width, app->height);
   app->r = SDL_CreateRenderer(app->w, -1, app->rflags);
+
+  if (! app->age_fade_period) app->age_fade_period = DEFAULT_AGE_FADE_PERIOD;
+  if (! app->age_fade_start) app->age_fade_start = DEFAULT_AGE_FADE_ALPHA_START;
+  if (! app->age_fade_end) app->age_fade_end = DEFAULT_AGE_FADE_ALPHA_END;
 
 
   /* load fonts. */
@@ -1176,14 +1183,19 @@ int app_cycle_gfx (app_t * app)
 	      SDL_QueryTexture(blttex, &fmt, &access, &w, &h);
 	      SDL_Rect dst = { x, y, w, h };
 	      long age = SDL_GetTicks() - entry->spawntime;
-	      if (age < AGE_FADE_PERIOD)
+	      if (age < app->age_fade_period)
 		{
-		  int age_scaled = (AGE_FADE_ALPHA_START - AGE_FADE_ALPHA_END) * age / AGE_FADE_PERIOD;
-		  SDL_SetTextureAlphaMod(blttex, AGE_FADE_ALPHA_START - age_scaled);
+		  int age_scaled = (app->age_fade_start - app->age_fade_end) * age / app->age_fade_period;
+		  SDL_SetTextureAlphaMod(blttex, app->age_fade_start - age_scaled);
+		}
+	      else if (age < app->age_fade_period * 2)
+		{
+		  /* repeatedly set fade end. */
+		  SDL_SetTextureAlphaMod(blttex, app->age_fade_end);
 		}
 	      else
 		{
-		  SDL_SetTextureAlphaMod(blttex, AGE_FADE_ALPHA_END);
+		  /* settled on fade end. */
 		}
 	      SDL_RenderCopy(app->r, blttex, NULL, &dst);
 	    }
