@@ -31,6 +31,9 @@
 #include <SDL.h>
 #include <SDL_ttf.h>
 
+#define PACKAGE "SDL_DumpEvents"
+#define VERSION "0.01"
+
 /*
    Original intent was to help test/debug Steam Controller configurations.
 
@@ -312,21 +315,31 @@ SDL_RWops * find_path_to_ttf_file (const char * filename, char * out_buf, int bu
 
 
 
+const char * version_summary = \
+PACKAGE " " VERSION "\n"
+"Copyright 2018 Fred Lee <fredslee27@gmail.com>\n"
+"License: GPLv3+ (GNU General Public License version 3 or later)\n"
+;
 
 #if 1
 const char * options_summary = \
-"    -h, --help          Show this help screen.\n"
-"    -L, --license       Show software license summary.\n"
-"    --verbose=N         Set logging verbosity.\n"
-"    -r,--resolution=WxH Set window resolution.\n"
-"    --map-file=FILENAME Set SDL game controller mapping from file.\n"
-"    --map-env=ENVNAME   Set SDL game controller mapping from environment.\n"
-"    --map-string=MAP    Set SDL game controller mapping from string literal.\n"
-"    --map-help          Dump controller GUIDs and names.\n"
+"  -h, --help                Show this help screen and quit.\n"
+"  -V, --version             Show version information and quit.\n"
+"  -v N, --verbose=N         Set logging verbosity [0].\n"
+"  -r WxH, --resolution=WxH  Set window resolution [1280x720].\n"
+"  -m FILE, --map-file=FILE  Load SDL game controller mappings from file.\n"
+"  -M MAP, --map-string=MAP  Add SDL game controller mapping.\n"
+"  --map-env=ENVNAME         SDL game controller mapping from environment.\n"
+"  --map-help                Dump controller GUIDs and names.\n"
 "\n"
 "Mapping information at https://wiki.libsdl.org/SDL_GameControllerAddMapping\n"
 ;
 
+const char * OPT_HELP = "help";
+const char * OPT_VERSION = "version";
+const char * OPT_VERBOSE = "verbose";
+const char * OPT_RESOLUTION = "resolution";
+const char * OPT_MAPPING = "mapping";
 const char * OPT_MAP_FILE = "map-file";
 const char * OPT_MAP_ENV = "map-env";
 const char * OPT_MAP_STRING = "map-string";
@@ -334,21 +347,21 @@ const char * OPT_MAP_HELP = "map-help";
 
 app_t * app_parse_argv (app_t * app, int argc, char ** argv)
 {
-  static const char * optstring = "hLvr:g:";
   int show_usage = 0;
-  int show_license = 0;
+  int show_version = 0;
   int mapping_action = 0;
+  static const char * optstring = "h?Vvr:m:M:";
   const struct option longopts[] = {
       /* { long_name:string, has_arg:int, flag:address, val:int } */
-	{ "help", no_argument, NULL, 'h' },
-	{ "license", no_argument, NULL, 'L' },
-	{ "verbose", required_argument, NULL, 'v' },
-	{ "resolution", required_argument, NULL, 'r' },
-	{ "mapping", required_argument, &mapping_action, 1 },
-	{ OPT_MAP_FILE, optional_argument, &mapping_action, MAPPING_FILE },
-	{ OPT_MAP_ENV, optional_argument, &mapping_action, MAPPING_ENV },
-	{ OPT_MAP_STRING, required_argument, &mapping_action, MAPPING_LITERAL },
-	{ OPT_MAP_HELP, no_argument, &mapping_action, MAPPING_HELP },
+	{ OPT_HELP, no_argument, NULL, 'h' },
+	{ OPT_VERSION, no_argument, NULL, 'V' },
+	{ OPT_VERBOSE, required_argument, NULL, 'v' },
+	{ OPT_RESOLUTION, required_argument, NULL, 'r' },
+	{ OPT_MAPPING, required_argument, &mapping_action, 1 },
+	{ OPT_MAP_FILE, optional_argument, NULL, 'm' },
+	{ OPT_MAP_ENV, optional_argument, NULL, 0 },
+	{ OPT_MAP_STRING, required_argument, NULL, 'M' },
+	{ OPT_MAP_HELP, no_argument, NULL, 0 },
 	{ 0, 0, 0, 0 }
   };
 
@@ -359,14 +372,23 @@ app_t * app_parse_argv (app_t * app, int argc, char ** argv)
       /* optarg is the string value for optional/required arguments. */
       switch (optval)
 	{
+	case '?':
 	case 'h': /* show help */
 	  show_usage = 1;
 	  break;
-	case 'L': /* show license */
-	  show_license = 1;
+	case 'V': /* show version */
+	  show_version = 1;
 	  break;
 	case 'v': /* set verbosity */
 	  app->logginess = SDL_atoi(optarg);
+	  break;
+	case 'm': /* set mapping file */
+	  app->mapping_protocol = MAPPING_FILE;
+	  app->mapping_locator = optarg ? optarg : "";
+	  break;
+	case 'M': /* set mapping string */
+	  app->mapping_protocol = MAPPING_LITERAL;
+	  app->mapping_locator = optarg;
 	  break;
 	case 'r': /* set resolution */
 	    {
@@ -383,24 +405,14 @@ app_t * app_parse_argv (app_t * app, int argc, char ** argv)
 	    }
 	  break;
 	case 0: /* long-only option. */
-	  if (longopts[longindex].name == OPT_MAP_FILE)
+	  if (longopts[longindex].name == OPT_MAP_HELP)
 	    {
-	      app->mapping_protocol = MAPPING_FILE;
-	      app->mapping_locator = optarg ? optarg : "";
+	      app->mapping_protocol = MAPPING_HELP;
 	    }
 	  else if (longopts[longindex].name == OPT_MAP_ENV)
 	    {
 	      app->mapping_protocol = MAPPING_ENV;
 	      app->mapping_locator = optarg ? optarg : DEFAULT_MAPPING_ENVVAR;
-	    }
-	  else if (longopts[longindex].name == OPT_MAP_STRING)
-	    {
-	      app->mapping_protocol = MAPPING_LITERAL;
-	      app->mapping_locator = optarg;
-	    }
-	  else if (longopts[longindex].name == OPT_MAP_HELP)
-	    {
-	      app->mapping_protocol = MAPPING_HELP;
 	    }
 	  break;
 	}
@@ -411,8 +423,10 @@ app_t * app_parse_argv (app_t * app, int argc, char ** argv)
       puts(options_summary);
       return NULL;
     }
-  if (show_license)
+  if (show_version)
     {
+      puts(version_summary);
+      return NULL;
     }
 
   return app;
