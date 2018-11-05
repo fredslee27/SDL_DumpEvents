@@ -26,6 +26,7 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <getopt.h>
 
 #include <SDL.h>
 #include <SDL_ttf.h>
@@ -59,6 +60,8 @@ MISC       | KEYB      | MOUSE     | JOY      | CONTROLLER
 /* Default window size. */
 #define DEFAULT_WIDTH 1280
 #define DEFAULT_HEIGHT 720
+
+#define DEFAULT_MAPPING_ENVVAR "SDL_DUMPEVENTS_MAPPING"
 
 
 
@@ -96,6 +99,14 @@ typedef struct logbuf_s {
     logentry_t buf[MAX_NUMLINES];
 } logbuf_t;
 
+enum mapping_protocol_e {
+    MAPPING_NONE = 0,
+    MAPPING_LITERAL,
+    MAPPING_ENV,
+    MAPPING_FILE,
+    MAPPING_HELP
+};
+
 /* Persistent graphics elements. */
 typedef struct gfxdecor_s {
     int x;
@@ -106,6 +117,10 @@ typedef struct gfxdecor_s {
 
 typedef struct app_s {
     int alive;
+
+    int logginess;
+    enum mapping_protocol_e mapping_protocol;
+    const char * mapping_locator;
 
     int width;
     int height;
@@ -297,6 +312,156 @@ SDL_RWops * find_path_to_ttf_file (const char * filename, char * out_buf, int bu
 
 
 
+
+#if 1
+const char * options_summary = \
+"    -h, --help          Show this help screen.\n"
+"    -L, --license       Show software license summary.\n"
+"    --verbose=N         Set logging verbosity.\n"
+"    -r,--resolution=WxH Set window resolution.\n"
+"    --map-file=FILENAME Set SDL game controller mapping from file.\n"
+"    --map-env=ENVNAME   Set SDL game controller mapping from environment.\n"
+"    --map-string=MAP    Set SDL game controller mapping from string literal.\n"
+"    --map-help          Dump controller GUIDs and names.\n"
+"\n"
+"Mapping information at https://wiki.libsdl.org/SDL_GameControllerAddMapping\n"
+;
+
+const char * OPT_MAP_FILE = "map-file";
+const char * OPT_MAP_ENV = "map-env";
+const char * OPT_MAP_STRING = "map-string";
+const char * OPT_MAP_HELP = "map-help";
+
+app_t * app_parse_argv (app_t * app, int argc, char ** argv)
+{
+  static const char * optstring = "hLvr:g:";
+  int show_usage = 0;
+  int show_license = 0;
+  int mapping_action = 0;
+  const struct option longopts[] = {
+      /* { long_name:string, has_arg:int, flag:address, val:int } */
+	{ "help", no_argument, NULL, 'h' },
+	{ "license", no_argument, NULL, 'L' },
+	{ "verbose", required_argument, NULL, 'v' },
+	{ "resolution", required_argument, NULL, 'r' },
+	{ "mapping", required_argument, &mapping_action, 1 },
+	{ OPT_MAP_FILE, optional_argument, &mapping_action, MAPPING_FILE },
+	{ OPT_MAP_ENV, optional_argument, &mapping_action, MAPPING_ENV },
+	{ OPT_MAP_STRING, required_argument, &mapping_action, MAPPING_LITERAL },
+	{ OPT_MAP_HELP, no_argument, &mapping_action, MAPPING_HELP },
+	{ 0, 0, 0, 0 }
+  };
+
+  int optval = 0;
+  int longindex = 0;
+  while (((optval = getopt_long(argc, argv, optstring, longopts, &longindex))) != -1)
+    {
+      /* optarg is the string value for optional/required arguments. */
+      switch (optval)
+	{
+	case 'h': /* show help */
+	  show_usage = 1;
+	  break;
+	case 'L': /* show license */
+	  show_license = 1;
+	  break;
+	case 'v': /* set verbosity */
+	  app->logginess = SDL_atoi(optarg);
+	  break;
+	case 'r': /* set resolution */
+	    {
+	      char * endptr;
+	      app->width = SDL_strtol(optarg, &endptr, 0);
+	      if (*endptr)
+		{
+		  endptr++;
+		  if (*endptr)
+		    {
+		      app->height = SDL_strtol(endptr, &endptr, 0);
+		    }
+		}
+	    }
+	  break;
+	case 0: /* long-only option. */
+	  if (longopts[longindex].name == OPT_MAP_FILE)
+	    {
+	      app->mapping_protocol = MAPPING_FILE;
+	      app->mapping_locator = optarg ? optarg : "";
+	    }
+	  else if (longopts[longindex].name == OPT_MAP_ENV)
+	    {
+	      app->mapping_protocol = MAPPING_ENV;
+	      app->mapping_locator = optarg ? optarg : DEFAULT_MAPPING_ENVVAR;
+	    }
+	  else if (longopts[longindex].name == OPT_MAP_STRING)
+	    {
+	      app->mapping_protocol = MAPPING_LITERAL;
+	      app->mapping_locator = optarg;
+	    }
+	  else if (longopts[longindex].name == OPT_MAP_HELP)
+	    {
+	      app->mapping_protocol = MAPPING_HELP;
+	    }
+	  break;
+	}
+    }
+  if (show_usage)
+    {
+      printf("usage: %s [OPTIONS]\n\n", argv[0]);
+      puts(options_summary);
+      return NULL;
+    }
+  if (show_license)
+    {
+    }
+
+  return app;
+}
+#else
+/* No GNU getopt_long. */
+
+app_t * app_parse_argv (app_t * app, int argc, char ** argv)
+{
+  (void)argc;
+  (void)argv;
+  return app;
+}
+#endif
+
+
+/* utility function: pick first index in array of pointers fulfilling a criteria (default is-NULL, for finding an empty slot). */
+static
+int find_slot (int packcount, void ** pack, int (*predicate)(void*, void*), void * userdata)
+{
+  int i = 0;
+  for (i = 0; i < packcount; i++)
+    {
+      if (predicate)
+	{
+	  /* delegate to predicate function. */
+	  if (predicate(pack[i], userdata))
+	    break;
+	}
+      else
+	{
+	  /* default predicate: compare to NULL */
+	  if (pack[i] == NULL)
+	    break;
+	}
+    }
+  if (i < packcount)
+    return i;
+  return -1;
+}
+
+
+
+/*
+   Initialize app state.
+
+   Returns pointer to app instance,
+   or returns NULL if app cannot proceed (error or forced quit).
+*/
 app_t * app_init (app_t * app, int argc, char ** argv)
 {
   if (!app)
@@ -311,17 +476,77 @@ app_t * app_init (app_t * app, int argc, char ** argv)
   /* Zero out struct. */
   SDL_memset(app, 0, sizeof(*app));
 
-  /* Parse command-line arguments. */
-  (void)argc;
-  (void)argv;
-
   int i;
   for (i = 0; i < MAX_CATEGORIES; i++)
     {
       logbuf_init(app->logbuf + i, 0);
     }
 
+  /* Parse command-line arguments here. */
+  if (! app_parse_argv(app, argc, argv))
+    return NULL;
+
+
+  /* Start invoking SDL. */
   SDL_Init(SDL_INIT_EVERYTHING);
+
+
+  /* Prepare game controller mappings. */
+  switch (app->mapping_protocol)
+    {
+    case MAPPING_FILE:
+      if (app->mapping_locator[0])
+	{
+	  /* filename */
+	  SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+		      "Loading mapping from '%s'",
+		      app->mapping_locator);
+	  int res = SDL_GameControllerAddMappingsFromFile(app->mapping_locator);
+	  if (res == -1)
+	    SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Error loading mappings from '%s'.", app->mapping_locator);
+	}
+      else
+	{
+	  /* stdin */
+	  SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+		      "Loading mapping from stdin");
+	  SDL_RWops * io = SDL_RWFromFP(stdin, SDL_TRUE);
+	  SDL_GameControllerAddMappingsFromRW(io, SDL_TRUE);
+	}
+      break;
+    case MAPPING_ENV:
+      SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+		  "Loading mapping from env '%s'",
+		  app->mapping_locator);
+      SDL_GameControllerAddMapping(getenv(app->mapping_locator));
+      break;
+    case MAPPING_LITERAL:
+      SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+		  "Loading mapping \"%s\".",
+		  app->mapping_locator);
+      SDL_GameControllerAddMapping(getenv(app->mapping_locator));
+      break;
+    case MAPPING_HELP:
+	{
+	  int i;
+	  char jsguid[80] = { 0, };
+	  char jsname[80] = { 0, };
+	  for (i = 0; i < SDL_NumJoysticks(); i++)
+	    {
+	      jsguid[0] = 0;
+	      jsname[0] = 0;
+	      SDL_JoystickGUID guid = SDL_JoystickGetDeviceGUID(i);
+	      SDL_JoystickGetGUIDString(guid, jsguid, sizeof(jsguid));
+	      SDL_snprintf(jsname, sizeof(jsname), "%s", SDL_JoystickNameForIndex(i));
+	      SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "JS #%d: GUID=%s (%s)\n", i, jsguid, jsname);
+	    }
+	  return NULL;
+	}
+      break;
+    case MAPPING_NONE:
+    default:
+      break;
+    }
 
   /* Enable joystick events. */
   SDL_JoystickEventState(SDL_ENABLE);
@@ -330,8 +555,8 @@ app_t * app_init (app_t * app, int argc, char ** argv)
 
   /* open main window. */
   SDL_snprintf(app->title0, sizeof(app->title0), APP_TITLE);
-  app->width = DEFAULT_WIDTH;
-  app->height = DEFAULT_HEIGHT;
+  if (! app->width) app->width = DEFAULT_WIDTH;
+  if (! app->height) app->height = DEFAULT_HEIGHT;
   app->x0 = SDL_WINDOWPOS_UNDEFINED;
   app->y0 = SDL_WINDOWPOS_UNDEFINED;
   app->wflags = SDL_WINDOW_OPENGL;
@@ -342,7 +567,9 @@ app_t * app_init (app_t * app, int argc, char ** argv)
 			    app->x0, app->y0,
 			    app->width, app->height,
 			    app->wflags);
+  SDL_LogDebug(SDL_LOG_CATEGORY_APPLICATION, "Opened window %dx%d", app->width, app->height);
   app->r = SDL_CreateRenderer(app->w, -1, app->rflags);
+
 
   /* load fonts. */
   TTF_Init();
@@ -377,6 +604,22 @@ app_t * app_init (app_t * app, int argc, char ** argv)
   app->fonts[2] = TTF_OpenFontRW(app->font_io[0], 0, 20);
 
   /* Do not close the RW until TTF lib shuts down. */
+
+
+  /* Open game controllers (apply mappings) */
+  for (int jsnum = 0; jsnum < SDL_NumJoysticks(); jsnum++)
+    {
+      if (SDL_IsGameController(jsnum))
+	{
+	  /* Emulate controller device add event to trigger handler. */
+	  SDL_Event pushevt;
+	  pushevt.cdevice.type = SDL_CONTROLLERDEVICEADDED;
+	  pushevt.cdevice.timestamp = 0;
+	  pushevt.cdevice.which = jsnum;
+	  SDL_PushEvent(&pushevt);
+	}
+    }
+
 
   return app;
 }
@@ -608,6 +851,7 @@ int app_on_joydev (app_t * app, SDL_Event * evt)
 {
   const char * action = "?";
   char jsname[80] = { 0, };
+  char jsguid[80] = { 0, };
   int n = 0;
   int packidx = -1; /* opened joystick handles used by this app. */
 
@@ -623,13 +867,7 @@ int app_on_joydev (app_t * app, SDL_Event * evt)
       /* add to open devices. */
       devnum = evt->jdevice.which; /* joystick device index. */
       /* find empty handle slot. */
-      packidx = 0;
-      while (packidx < MAX_JOYSTICKS)
-	{
-	  if (! app->jspack[packidx])
-	    break;
-	  packidx++;
-	}
+      packidx = find_slot(MAX_JOYSTICKS, (void**)(app->jspack), NULL, NULL);
       if ((0 <= packidx) && (packidx < MAX_JOYSTICKS))
 	{
 	  /* valid slot, open device. */
@@ -638,8 +876,9 @@ int app_on_joydev (app_t * app, SDL_Event * evt)
 	  if (openjs)
 	    {
 	      instid = SDL_JoystickInstanceID(openjs);
-	      SDL_snprintf(jsname, sizeof(jsname), "%s", SDL_JoystickName(openjs));
-	      SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Opened joystick handle %d as instance #%d from index %d \"%s\".", packidx, instid, devnum, jsname);
+	      SDL_JoystickGetGUIDString(SDL_JoystickGetGUID(openjs), jsguid, sizeof(jsguid));
+	      n = SDL_snprintf(jsname, sizeof(jsname), "%s", SDL_JoystickName(openjs));
+	      SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Opened joystick handle %d as instance #%d from index %d \"%s\" (%s).", packidx, instid, devnum, jsname, jsguid);
 	    }
 	  else
 	    {
@@ -664,7 +903,7 @@ int app_on_joydev (app_t * app, SDL_Event * evt)
 	  if (SDL_JoystickInstanceID(doomedjs) == instid)
 	    {
 	      /* joystick number matches; close and remove from handles */
-	      SDL_snprintf(jsname, sizeof(jsname), "%s", SDL_JoystickName(doomedjs));
+	      n = SDL_snprintf(jsname, sizeof(jsname), "%s", SDL_JoystickName(doomedjs));
 	      SDL_JoystickClose(app->jspack[packidx]);
 	      app->jspack[packidx] = NULL;
 	      SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Closed joystck handle %d being joystick #%d \"%s\"", packidx, instid, jsname);
@@ -708,31 +947,6 @@ int app_on_gamebup (app_t * app, SDL_Event * evt)
   return 0;
 }
 
-/* utility function: pick first index in array of pointers fulfilling a criteria (default is-NULL, for finding an empty slot). */
-static
-int find_slot (int packcount, void ** pack, int (*predicate)(void*, void*), void * userdata)
-{
-  int i = 0;
-  for (i = 0; i < packcount; i++)
-    {
-      if (predicate)
-	{
-	  /* delegate to predicate function. */
-	  if (predicate(pack[i], userdata))
-	    break;
-	}
-      else
-	{
-	  /* default predicate: compare to NULL */
-	  if (pack[i] == NULL)
-	    break;
-	}
-    }
-  if (i < packcount)
-    return i;
-  return -1;
-}
-
 static
 int gamedev_instanceid_eq_p (void * obj, void * userdata)
 {
@@ -756,6 +970,16 @@ int app_on_gamedev (app_t * app, SDL_Event * evt)
     {
     case SDL_CONTROLLERDEVICEADDED:
       action = "ADD";
+      /* avoid duplicate */
+      instid = evt->cdevice.which;
+      packidx = find_slot(MAX_GAMEPADS, (void**)(app->gcpack),
+			  gamedev_instanceid_eq_p, (void*)instid);
+      if (packidx != -1) /* controller already handled. */
+	{
+	  SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Re-opening game controller (handle=%d, jsinstance=%ld)\n", packidx, instid);
+	  action = NULL;
+	  break;
+	}
       /* find a slot. */
       packidx = find_slot(MAX_GAMEPADS, (void**)(app->gcpack), NULL, NULL);
       if (packidx > -1)
@@ -768,7 +992,7 @@ int app_on_gamedev (app_t * app, SDL_Event * evt)
 	      n = SDL_snprintf(gcname, sizeof(gcname), "%s", SDL_GameControllerName(opengc));
 	      instid = SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(opengc));
 	      app->gcpack[packidx] = opengc;
-	      SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Opened game controller (handle=%d, instance=%ld, sysid=%d) \"%s\".", packidx, instid, devnum, gcname);
+	      SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Opened game controller (handle=%d, jsinstance=%ld, sysid=%d) \"%s\".", packidx, instid, devnum, gcname);
 	    }
 	  else
 	    {
@@ -806,12 +1030,15 @@ int app_on_gamedev (app_t * app, SDL_Event * evt)
       break;
     }
   /* TODO: truncate gcname at 12th glyph, not 12th byte. */
-  if (n > 11)
-    gcname[11] = '\0';
-  app_fwrite(app, CAT_CONTROLLER, "%s: %ld=%s",
-	     action,
-	     instid,
-	     gcname);
+  if (action)
+    {
+      if (n > 11)
+	gcname[11] = '\0';
+      app_fwrite(app, CAT_CONTROLLER, "%s: %ld=%s",
+		 action,
+		 instid,
+		 gcname);
+    }
   return 0;
 }
 
@@ -1043,7 +1270,8 @@ app_t _app, *app=&_app;
 
 int main (int argc, char *argv[])
 {
-  app_init(app, argc, argv);
+  if (!app_init(app, argc, argv))
+    return 1;
   app_main(app);
   app_destroy(app);
   return 0;
