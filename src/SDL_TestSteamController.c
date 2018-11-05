@@ -66,6 +66,11 @@ MISC       | KEYB      | MOUSE     | JOY      | CONTROLLER
 
 #define DEFAULT_MAPPING_ENVVAR "SDL_DUMPEVENTS_MAPPING"
 
+/* Fade effect parameters. */
+#define AGE_FADE_PERIOD 1000
+#define AGE_FADE_ALPHA_START 255
+#define AGE_FADE_ALPHA_END 63
+
 
 
 /* major SDL Event type categorize for display:
@@ -89,6 +94,7 @@ enum {
 /* One log entry line. */
 typedef struct logentry_s {
     char line[MAX_LINELENGTH];
+    long spawntime;
     SDL_Surface * surf;
     SDL_Texture * tex;
 } logentry_t;
@@ -214,6 +220,7 @@ int logbuf_append (logbuf_t * logbuf, const char * buf, int buflen)
 {
   int n = (logbuf->head + logbuf->len) % logbuf->cap;
   SDL_memcpy(logbuf->buf[n].line, buf, buflen);
+  logbuf->buf[n].spawntime = SDL_GetTicks();
   logbuf->len++;
   if (logbuf->len > logbuf->cap)
     {
@@ -1168,6 +1175,16 @@ int app_cycle_gfx (app_t * app)
 	      int access = 0, w = 0, h = 0;
 	      SDL_QueryTexture(blttex, &fmt, &access, &w, &h);
 	      SDL_Rect dst = { x, y, w, h };
+	      long age = SDL_GetTicks() - entry->spawntime;
+	      if (age < AGE_FADE_PERIOD)
+		{
+		  int age_scaled = (AGE_FADE_ALPHA_START - AGE_FADE_ALPHA_END) * age / AGE_FADE_PERIOD;
+		  SDL_SetTextureAlphaMod(blttex, AGE_FADE_ALPHA_START - age_scaled);
+		}
+	      else
+		{
+		  SDL_SetTextureAlphaMod(blttex, AGE_FADE_ALPHA_END);
+		}
 	      SDL_RenderCopy(app->r, blttex, NULL, &dst);
 	    }
 	}
