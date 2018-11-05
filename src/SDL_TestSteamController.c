@@ -1,5 +1,23 @@
 /* gcc `pkg-config --cflags --libs sdl2 SDL2_ttf`
 */
+/*
+    Dump SDL events.
+    Copyright (C) 2018  Fred Lee <fredslee27@gmail.com>
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+*/
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -10,12 +28,13 @@
 #include <SDL.h>
 #include <SDL_ttf.h>
 
-
 /*
-   Display SDL events into scoped columns:
+   Original intent was to help test/debug Steam Controller configurations.
 
-MISC       | KEYB      | MOUSE        | JOY
-           |           |              |
+   Display SDL events into categorized columns:
+
+MISC       | KEYB      | MOUSE     | JOY      | CONTROLLER
+           |           |           |          |
 ...
 */
 
@@ -32,7 +51,19 @@ MISC       | KEYB      | MOUSE        | JOY
 #define DEFAULT_WIDTH 1280
 #define DEFAULT_HEIGHT 720
 
+/* Default font file name. */
+#define DEFAULT_FONT_FILENAME "FreeMono.ttf"
 
+#define DIR_SEPARATOR "/"
+
+
+/* major SDL Event type categorize for display:
+  + a catch-all for types that do not fit the others (listed first due to including windowing events such as Show and Expose).
+  + Keyboard events, including SDL_KEYDOWN and SDL_KEYUP.
+  + Mouse events, including motion, buttons, and scroll wheel.
+  + Joystick events, including .
+  + SDL Controller events.
+*/
 enum {
     SCOPE_MISC = 0,
     SCOPE_KEYB,
@@ -80,6 +111,7 @@ typedef struct app_s {
     SDL_Renderer *r;
     SDL_GLContext glctx;
 
+    SDL_RWops * font_io[1];  /* SDL_RWops* type for TTF (file). */
     TTF_Font * fonts[4];
     int njs;  // number of joysticks opened.
     SDL_Joystick * jspack[MAX_JOYSTICKS];
@@ -94,6 +126,32 @@ typedef struct app_s {
 } app_t;
 
 
+
+
+#ifdef __GNUC__
+/* This bit of assembly incorporates the contents of the default font file, yielding symbols 'ttf0_start', 'ttf0_end', 'ttf0_size'.
+Values intended to mimick the effect of using "ld -r -b binary ..." or objcopy to include arbitrary binary file into object file.
+*/
+__asm__(
+	".global _binary_ttf0_start\n.global _binary_ttf0_end\n.global _binary_ttf0_size\n"
+	"_binary_ttf0_start: .incbin \"" DEFAULT_FONT_FILENAME "\"\n"
+	"_binary_ttf0_end: .byte 0\n"
+	".set _binary_ttf0_size, (_binary_ttf0_end - _binary_ttf0_start)\n"
+);
+extern const unsigned char _binary_ttf0_start[];
+extern const unsigned char _binary_ttf0_end[0];
+extern const struct{} _binary_ttf0_size;
+
+/* Aliases/casts for C semantics. */
+const unsigned char * ttf0_data = _binary_ttf0_start;
+const unsigned char * ttf0_data_end = _binary_ttf0_end;
+#define ttf0_size ((long)&_binary_ttf0_size)
+#else
+/* no GNU asm; use zeroes. */
+const unsigned char ttf0_data[1] = { 0 };
+const unsigned char * ttf0_data_end = ttf0_data;
+#define ttf0_size (0)
+#endif //0
 
 
 
@@ -190,6 +248,46 @@ int logbuf_test ()
 
 
 
+/*
+   Determine fully-qualified path name to font file 'filename'.
+Try:
+1. environment variable(s) -- user-modifiable
+2. SDL's notion of the application data directory -- fallback/default
+3. current working directory -- last resort
+*/
+static
+SDL_RWops * find_path_to_ttf_file (const char * filename, char * out_buf, int buflen)
+{
+  SDL_RWops * retval = NULL;
+  int n = 0;
+
+  /* try env vars. */
+  const char * env_name = "SDL_DUMPEVENTS_PATH";
+  n = 0;
+  n += SDL_snprintf(out_buf+n, buflen-n, "%s%s", getenv(env_name), DIR_SEPARATOR);
+  n += SDL_snprintf(out_buf+n, buflen-n, "%s", filename);
+  retval = SDL_RWFromFile(out_buf, "rb");
+  if (retval) return retval;
+
+  /* try SDL BasePath */
+  char * sdl_basepath = SDL_GetBasePath();
+  if (sdl_basepath)
+    {
+      n = 0;
+      n += SDL_snprintf(out_buf+n, buflen-n, "%s%s", sdl_basepath, filename);
+      retval = SDL_RWFromFile(out_buf, "rb");
+      SDL_free(sdl_basepath);
+      if (retval) return retval;
+    }
+
+  /* try cwd */
+  if ((retval = SDL_RWFromFile(filename, "r"))) return retval;
+
+  return NULL;
+}
+
+
+
 app_t * app_init (app_t * app)
 {
   if (!app)
@@ -239,15 +337,49 @@ app_t * app_init (app_t * app)
 
   /* load fonts. */
   TTF_Init();
-  app->fonts[0] = TTF_OpenFont("FreeMono.ttf", 12);
-  app->fonts[1] = TTF_OpenFont("FreeMono.ttf", 16);
-  app->fonts[2] = TTF_OpenFont("FreeMono.ttf", 20);
+
+  if (ttf0_size)
+    {
+      /* use built-in font. */
+      app->font_io[0] = SDL_RWFromMem((void*)ttf0_data, ttf0_size);
+      SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Using built-in font.");
+    }
+  else
+    {
+      /* search for suitable font file. */
+#ifdef _PC_PATH_MAX
+      const int max_pathlen = pathconf("/", _PC_PATH_MAX);
+#else
+      const int max_pathlen = 4096; /* something sensible as of Y2013. */
+#endif /* _PC_PATH_MAX */
+      char * fqpn_font = SDL_malloc(max_pathlen);
+      app->font_io[0] = find_path_to_ttf_file(DEFAULT_FONT_FILENAME, fqpn_font, max_pathlen);
+      SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Using font file '%s'", fqpn_font);
+      SDL_free(fqpn_font);
+    }
+
+  if (! app->font_io[0])
+    {
+      SDL_LogCritical(SDL_LOG_CATEGORY_APPLICATION, "Unable to open any font file.");
+      abort();
+    }
+  app->fonts[0] = TTF_OpenFontRW(app->font_io[0], 0/*do not auto-close*/, 12);
+  app->fonts[1] = TTF_OpenFontRW(app->font_io[0], 0, 16);
+  app->fonts[2] = TTF_OpenFontRW(app->font_io[0], 0, 20);
+
+  /* Do not close the RW until TTF lib shuts down. */
 
   return app;
 }
 
 app_t * app_destroy (app_t * app)
 {
+  TTF_CloseFont(app->fonts[2]);
+  TTF_CloseFont(app->fonts[1]);
+  TTF_CloseFont(app->fonts[0]);
+  SDL_RWclose(app->font_io[0]);
+  TTF_Quit();
+
   SDL_DestroyRenderer(app->r);
   app->r = NULL;
   SDL_DestroyWindow(app->w);
