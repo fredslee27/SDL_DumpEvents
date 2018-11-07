@@ -66,6 +66,8 @@ MISC       | KEYB      | MOUSE     | JOY      | CONTROLLER
 #define MAX_JOYSTICKS 8
 /* Max number of game controller (gamepad) devices to recognize. */
 #define MAX_GAMEPADS 8
+/* Max number of permanent graphics decorations supported. */
+#define MAX_GFXDECOR 30
 
 /* Default window size. */
 #define DEFAULT_WIDTH 1280
@@ -77,7 +79,6 @@ MISC       | KEYB      | MOUSE     | JOY      | CONTROLLER
 #define DEFAULT_AGE_FADE_PERIOD 1000
 #define DEFAULT_AGE_FADE_ALPHA_START 255
 #define DEFAULT_AGE_FADE_ALPHA_END 127
-
 
 
 /* major SDL Event type categorize for display:
@@ -97,16 +98,31 @@ enum {
     MAX_CATEGORIES
 };
 
+/* Category labels. */
+static const char * catlabel[MAX_CATEGORIES] = {
+    "MISC",
+    "KEYB",
+    "MOUSE",
+    "JOY",
+    "SDL_CONTROLLER",
+};
+
 
 /* One log entry line. */
 typedef struct logentry_s {
     char line[MAX_LINELENGTH];
-    long spawntime;
+
+    struct {
+	long spawntime; /* spawn time, to calculate age. */
+	SDL_bool active; /* renderer to update texture properties with... */
+	unsigned char intensity;  /* alpha value. */
+    } fade;
+
     SDL_Surface * surf;
     SDL_Texture * tex;
 } logentry_t;
 
-/* List of logentry instances. */
+/* List of logentry instances; one per category column. */
 typedef struct logbuf_s {
     int cap;  // maximum lines permitted.
     int len;  // current lines valid.
@@ -158,11 +174,20 @@ typedef struct app_s {
     SDL_GameController * gcpack[MAX_GAMEPADS];
 
     /* Persistent decorations. */
-    gfxdecor_t decor[30];
+    gfxdecor_t decor[MAX_GFXDECOR];
 
     /* A logbuf instance per column. */
     logbuf_t logbuf[MAX_CATEGORIES];
 
+    /* Heartbeat samples. */
+    struct heartbeats_s {
+	int t;  /* last seen timestamp. */
+	int n;  /* number of samples. */
+	long samples[50]; /* the samples. */
+	char report[60];  /* text to show as heartbeat report. */
+    } heartbeats;
+
+    /* SDL window title. */
     char title0[255];
 } app_t;
 
@@ -230,7 +255,7 @@ int logbuf_append (logbuf_t * logbuf, const char * buf, int buflen)
 {
   int n = (logbuf->head + logbuf->len) % logbuf->cap;
   SDL_memcpy(logbuf->buf[n].line, buf, buflen);
-  logbuf->buf[n].spawntime = SDL_GetTicks();
+  logbuf->buf[n].fade.spawntime = SDL_GetTicks();
   logbuf->len++;
   if (logbuf->len > logbuf->cap)
     {
@@ -1094,6 +1119,16 @@ int app_printxy (app_t * app, TTF_Font * fon, int x, int y, const char * msg)
   return 0;
 }
 
+struct gfxdecor_s * app_get_decor (app_t * app, int decor_idx)
+{
+  if ((decor_idx < 0) || (decor_idx >= MAX_GFXDECOR))
+    return NULL;
+  struct gfxdecor_s * retval = app->decor + decor_idx;
+  if ((! retval->surf) && (! retval->tex))
+    return NULL;
+  return retval;
+}
+
 /* Generate and store text at a location to be rendered across many presentation cycles. */
 int app_install_text (app_t * app, int decor_idx, TTF_Font * fon, int x, int y, const char * msg)
 {
@@ -1101,52 +1136,71 @@ int app_install_text (app_t * app, int decor_idx, TTF_Font * fon, int x, int y, 
   SDL_Texture * blttex = NULL;
   SDL_Surface * textsurf = app->decor[decor_idx].surf;
 
-  if (!textsurf)
+  if (textsurf)
     {
-      textsurf = TTF_RenderText_Blended(fon, msg, fg);
-      blttex = SDL_CreateTextureFromSurface(app->r, textsurf);
-      app->decor[decor_idx].x = x;
-      app->decor[decor_idx].y = y;
-      app->decor[decor_idx].surf = textsurf;
-      app->decor[decor_idx].tex = blttex;
-    }
-  else
-    {
+      /* delete in preparation for overwrite. */
+      SDL_FreeSurface(textsurf);
+      textsurf = NULL;
       blttex = app->decor[decor_idx].tex;
+      if (blttex)
+	{
+	  SDL_DestroyTexture(blttex);
+	  app->decor[decor_idx].tex = NULL;
+	}
     }
 
-  SDL_Rect dst = { x, y, textsurf->w, textsurf->h };
-  SDL_RenderCopy(app->r, blttex, NULL, &dst);
+  textsurf = TTF_RenderText_Blended(fon, msg, fg);
+  blttex = SDL_CreateTextureFromSurface(app->r, textsurf);
+  app->decor[decor_idx].x = x;
+  app->decor[decor_idx].y = y;
+  app->decor[decor_idx].surf = textsurf;
+  app->decor[decor_idx].tex = blttex;
+
+  return 0;
+}
+
+/* Render the permanent decorations. */
+int app_render_decor (app_t * app)
+{
+  for (int i = 0; i < MAX_GFXDECOR; i++)
+    {
+      struct gfxdecor_s * decor = app->decor + i;
+      SDL_Texture * blttex = decor->tex;
+      SDL_Surface * textsurf = decor->surf;
+      if (! blttex)
+	{
+	  textsurf = decor->surf;
+	  if (!textsurf)
+	    continue;
+	  blttex = SDL_CreateTextureFromSurface(app->r, textsurf);
+	  decor->tex = blttex;
+	}
+      SDL_Rect dst;
+      SDL_memset(&dst, 0, sizeof(dst));
+
+      dst.x = decor->x;
+      dst.y = decor->y;
+      dst.w = textsurf->w;
+      dst.h = textsurf->h;
+
+      SDL_RenderCopy(app->r, blttex, NULL, &dst);
+    }
 
   return 0;
 }
 
 /* Handle all graphics output. */
-int app_cycle_gfx (app_t * app)
+int app_cycle_gfx (app_t * app, long t)
 {
   SDL_SetRenderDrawColor(app->r, 0,0,0,0);
   SDL_RenderClear(app->r);
 
   SDL_SetRenderDrawColor(app->r, 0xff,0xff,0xff,0xff);
 
-  /* banner text at top of surface. */
-  app_install_text(app, 0, app->fonts[2], 0, 0, BANNER);
-
-  SDL_LogDebug(SDL_LOG_CATEGORY_APPLICATION, "len(logbuf) = %d", logbuf_len(app->logbuf));
-
-  /* the categories drawn */
-  static const char * catlabel[MAX_CATEGORIES] = {
-      "MISC",
-      "KEYB",
-      "MOUSE",
-      "JOY",
-      "SDL_CONTROLLER",
-  };
-  int catnum;
   int x0 = 0;
   int y0 = 40;
   int x, y;
-  for (catnum = 0; catnum < MAX_CATEGORIES; catnum++)
+  for (int catnum = 0; catnum < MAX_CATEGORIES; catnum++)
     {
       x = x0 + (catnum * app->width / MAX_CATEGORIES);
       y = y0;
@@ -1157,56 +1211,51 @@ int app_cycle_gfx (app_t * app)
 	}
 
       /* Place category name as column header. */
-      app_install_text(app, catnum+1, app->fonts[2], x, y, catlabel[catnum]);
+      if (!app_get_decor(app, catnum+1))
+	app_install_text(app, catnum+1, app->fonts[2], x, y, catlabel[catnum]);
 
-      /* Sync rendered textsurf with log lines for this category. */
-      int linenum;
-      for (linenum = 0; linenum < MAX_NUMLINES; linenum++)
+      /* Render log lines for current category. */
+      struct logbuf_s * logbuf = app->logbuf + catnum;
+      int maxlines = logbuf->cap;
+      for (int linenum = 0; linenum < maxlines; linenum++)
 	{
 	  y += 20;
 	  logentry_t * entry = logbuf_get(app->logbuf + catnum, linenum);
 	  if (!entry) continue;
+	  SDL_Surface * textsurf = entry->surf;
 	  SDL_Texture * blttex = entry->tex;
-	  if (!blttex)
-	    {
-	      /* generate corresponding rendered textsurf. */
-	      SDL_Color fg = { 0xff, 0xff, 0xff, 0xff };
-	      TTF_Font * fon = app->fonts[2];
-	      const char * msg = entry ? entry->line : NULL;
-	      if (msg && *msg)
-		{
-		  SDL_LogDebug(SDL_LOG_CATEGORY_APPLICATION, "create text %d,%d", catnum, linenum);
-		  SDL_Surface * textsurf = TTF_RenderText_Blended(fon, msg, fg);
-		  blttex = SDL_CreateTextureFromSurface(app->r, textsurf);
-		  entry->surf = textsurf;
-		  entry->tex = blttex;
-		}
-	    }
 	  if (blttex)
 	    {
-	      /* render corresponding textsurf. */
-	      Uint32 fmt = 0;
-	      int access = 0, w = 0, h = 0;
-	      SDL_QueryTexture(blttex, &fmt, &access, &w, &h);
-	      SDL_Rect dst = { x, y, w, h };
-	      long age = SDL_GetTicks() - entry->spawntime;
-	      if (age < app->age_fade_period)
+	      /* age-fade effect. */
+	      if (entry->fade.active)
 		{
-		  int age_scaled = (app->age_fade_start - app->age_fade_end) * age / app->age_fade_period;
-		  SDL_SetTextureAlphaMod(blttex, app->age_fade_start - age_scaled);
+		  SDL_SetTextureAlphaMod(blttex, entry->fade.intensity);
 		}
-	      else if (age < app->age_fade_period * 2)
+
+	      /* render destination. */
+	      SDL_Rect dst;
+	      dst.x = x;
+	      dst.y = y;
+	      if (textsurf)
 		{
-		  /* repeatedly set fade end. */
-		  SDL_SetTextureAlphaMod(blttex, app->age_fade_end);
+		  dst.w = textsurf->w;
+		  dst.h = textsurf->h;
 		}
 	      else
 		{
-		  /* settled on fade end. */
+		  Uint32 fmt = 0;
+		  int access = 0;
+		  SDL_QueryTexture(blttex, &fmt, &access, &dst.w, &dst.h);
 		}
+
+	      /* render. */
 	      SDL_RenderCopy(app->r, blttex, NULL, &dst);
 	    }
 	}
+
+      /* render the permanent decorations. */
+      app_render_decor(app);
+
     }
 
   SDL_RenderPresent(app->r);
@@ -1214,8 +1263,7 @@ int app_cycle_gfx (app_t * app)
   return 0;
 }
 
-/* One step of main loop. */
-int app_cycle (app_t * app)
+int app_cycle_events (app_t * app)
 {
   SDL_Event _evt, *evt=&_evt;
   while (SDL_PollEvent(evt) > 0)
@@ -1284,7 +1332,88 @@ int app_cycle (app_t * app)
 	}
     }
 
-  app_cycle_gfx(app);
+  return 0;
+}
+
+int app_cycle_updates (app_t * app, long t)
+{
+  /* update heartbeat history. */
+  struct heartbeats_s * heartbeats = &(app->heartbeats);
+
+  const int divisor = 500;
+  if ((heartbeats->n % divisor) == 0)
+    {
+      int k = (heartbeats->n / divisor);
+      char buf[64];
+      int delta = t - heartbeats->t;
+      SDL_snprintf(buf, sizeof(buf), "Tick %d (+%d)", k, delta);
+      app_write(app, CAT_MISC, buf);
+      heartbeats->t = t;
+    }
+  heartbeats->n++;
+
+  /* banner text at top of surface. */
+  if (!app_get_decor(app, 0))
+    app_install_text(app, 0, app->fonts[2], 0, 0, BANNER);
+
+
+  for (int catnum = 0; catnum < MAX_CATEGORIES; catnum++)
+    {
+      struct logbuf_s * logbuf = app->logbuf + catnum;
+      int maxlines = logbuf->cap;
+      for (int linenum = 0; linenum < maxlines; linenum++)
+	{
+	  /* Synchronize associated text surface. */
+	  logentry_t * entry = logbuf_get(logbuf, linenum);
+	  if (!entry) continue;
+	  if (! entry->surf)
+	    {
+	      SDL_Color fg = { 0xff, 0xff, 0xff, 0xff };
+	      TTF_Font * fon = app->fonts[2];
+	      const char * msg = entry ? entry->line : NULL;
+	      if (msg && *msg)
+		{
+		  SDL_LogDebug(SDL_LOG_CATEGORY_APPLICATION, "create text %d,%d", catnum, linenum);
+		  SDL_Surface * textsurf = TTF_RenderText_Blended(fon, msg, fg);
+		  entry->tex = SDL_CreateTextureFromSurface(app->r, textsurf);
+		  entry->surf = textsurf;
+		}
+	    }
+	  /* Generate texture during render cycle. */
+
+	  /* Calculate age-fade effect. */
+	  long age = t - entry->fade.spawntime;
+	  if (age < app->age_fade_period)
+	    {
+	      /* calculate fading effect. */
+	      int age_scaled = (app->age_fade_start - app->age_fade_end) * age / app->age_fade_period;
+	      entry->fade.intensity = app->age_fade_start - age_scaled;
+	      entry->fade.active = SDL_TRUE;
+	    }
+	  else if (age < app->age_fade_period * 2)
+	    {
+	      /* clamp at end effect for a while. */
+	      entry->fade.intensity = app->age_fade_end;
+	      entry->fade.active = SDL_TRUE;
+	    }
+	  else if (entry->fade.active)
+	    {
+	      entry->fade.active = SDL_FALSE;
+	    }
+	}
+    }
+
+  return 0;
+}
+
+/* One step of main loop. */
+int app_cycle (app_t * app, long t)
+{
+  app_cycle_events(app);
+
+  app_cycle_updates(app, t);
+
+  app_cycle_gfx(app, t);
   return 0;
 }
 
@@ -1292,24 +1421,12 @@ int app_main (app_t * app)
 {
   app->alive = 1;
   int n = 0;
-  int lasttick = 0;
-  const int divisor = 500;
 
   /* main loop */
   while (app->alive != 0)
     {
-      if ((n % divisor) == 0)
-	{
-	  int k = (n / divisor);
-	  char buf[64];
-	  int delta = SDL_GetTicks() - lasttick;
-	  SDL_snprintf(buf, sizeof(buf), "Tick %d (+%d)", k, delta);
-	  app_write(app, CAT_MISC, buf);
-	  lasttick = SDL_GetTicks();
-	}
-      n++;
-
-      app_cycle(app);
+      long t = SDL_GetTicks();
+      app_cycle(app, t);
     }
 
   return 0;
