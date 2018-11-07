@@ -29,6 +29,9 @@
 #include <getopt.h>
 #endif
 
+/* safe to comment out the following line. */
+#include <unistd.h>
+
 #include <SDL.h>
 #include <SDL_ttf.h>
 
