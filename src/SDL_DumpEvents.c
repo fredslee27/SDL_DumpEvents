@@ -20,13 +20,14 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 */
-#include <stdarg.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <time.h>
-#include <unistd.h>
+#ifndef HAVE_GETOPT_LONG
+#define HAVE_GETOPT_LONG 1
+#endif
+
+
+#ifdef HAVE_GETOPT_LONG
 #include <getopt.h>
+#endif
 
 #include <SDL.h>
 #include <SDL_ttf.h>
@@ -49,6 +50,9 @@ MISC       | KEYB      | MOUSE     | JOY      | CONTROLLER
 #define APP_TITLE "SDL_DumpEvents"
 /* Default font file name. */
 #define DEFAULT_FONT_FILENAME "FreeMono.ttf"
+#ifndef BUILDIN_TTF
+#define BUILDIN_TTF DEFAULT_FONT_FILENAME
+#endif /* BUILDIN_TTF */
 #define DIR_SEPARATOR "/"
 
 /* Maximum length of one log line, bytes. */
@@ -168,7 +172,7 @@ Values intended to mimick the effect of using "ld -r -b binary ..." or objcopy t
 */
 __asm__(
 	".global _binary_ttf0_start\n.global _binary_ttf0_end\n.global _binary_ttf0_size\n"
-	"_binary_ttf0_start: .incbin \"" DEFAULT_FONT_FILENAME "\"\n"
+	"_binary_ttf0_start: .incbin \"" BUILDIN_TTF "\"\n"
 	"_binary_ttf0_end: .byte 0\n"
 	".set _binary_ttf0_size, (_binary_ttf0_end - _binary_ttf0_start)\n"
 );
@@ -189,7 +193,7 @@ const unsigned char * ttf0_data_end = ttf0_data;
 
 
 
-const char BANNER[] = APP_TITLE " - add as Non-Steam Game, run from Big Picture Mode";
+const char BANNER[] = APP_TITLE " - add as Non-Steam Game, run from Big Picture Mode; ESCAPE to quit";
 
 
 logbuf_t * logbuf_init (logbuf_t * logbuf, int cap)
@@ -331,7 +335,7 @@ PACKAGE " " VERSION "\n"
 "License: GPLv3+ (GNU General Public License version 3 or later)\n"
 ;
 
-#if 1
+#if HAVE_GETOPT_LONG
 const char * options_summary = \
 "  -h, --help                Show this help screen and quit.\n"
 "  -V, --version             Show version information and quit.\n"
