@@ -79,6 +79,15 @@ Miscellaneous events reported include:
 N.B. `ENTER`/`LEAVE` and `FOCUS_GAINED`/`FOCUS_LOST` may be staggered in GUI environments that opt away from click-to-focus (e.g. focus-follows-mouse or sloppy-focus).
 
 
+## Heartbeat
+
+In the lower left is a blinking heart.
+It alternates state after every 500 cycles of the main loop (around 250 ms).
+The first character (heart icon) changes state to indicate the app is still running and capable of updating the display (i.e. is not frozen/crashed).
+The first number (e.g. "+223") indicates the amount of time, in milliseconds, that passed since the last time the heart icon changed state, and is a measure of how long the CPU took to complete 500 cycles of the main loop.
+The second number (e.g. "x̄=210") indicates the statistical mean ("average") of the preceding 17 heart updates.
+The third number (e.g. "σ=12") is the statistical deviation of the preceding 17 updates, and indicates the degree of inconsistency in time between heart updates (higher number = more widely-varying/inconsistent update timespans).
+
 
 
 

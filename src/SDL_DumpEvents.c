@@ -68,6 +68,10 @@ MISC       | KEYB      | MOUSE     | JOY      | CONTROLLER
 #define MAX_GAMEPADS 8
 /* Max number of permanent graphics decorations supported. */
 #define MAX_GFXDECOR 30
+/* Max number of heartbeat data to store for reporting. */
+#define MAX_HEARTBEATS 17
+/* Number of mainloop cycles to advance heartbeat by one. */
+#define MAINLOOP_PER_HEARTBEAT 500
 
 /* Default window size. */
 #define DEFAULT_WIDTH 1280
@@ -77,8 +81,8 @@ MISC       | KEYB      | MOUSE     | JOY      | CONTROLLER
 
 /* Fade effect parameters. */
 #define DEFAULT_AGE_FADE_PERIOD 1000
-#define DEFAULT_AGE_FADE_ALPHA_START 255
-#define DEFAULT_AGE_FADE_ALPHA_END 127
+#define DEFAULT_AGE_FADE_ALPHA_START 0xff
+#define DEFAULT_AGE_FADE_ALPHA_END 0x7f
 
 
 /* major SDL Event type categorize for display:
@@ -156,6 +160,7 @@ typedef struct app_s {
     long age_fade_period;
     int age_fade_start;
     int age_fade_end;
+    SDL_bool log_heartbeat;
 
     int width;
     int height;
@@ -181,9 +186,12 @@ typedef struct app_s {
 
     /* Heartbeat samples. */
     struct heartbeats_s {
+	int cycles_per_heartbeat; /* steps of mainloop per heartbeat */
 	int t;  /* last seen timestamp. */
-	int n;  /* number of samples. */
-	long samples[50]; /* the samples. */
+	int n;  /* number of steps since last heartbeat. */
+	long samples[MAX_HEARTBEATS]; /* the samples. */
+	int nsamples;  /* number of samples valid */
+	int nextsample; /* indext to store next sample (circular buffer). */
 	char report[60];  /* text to show as heartbeat report. */
     } heartbeats;
 
@@ -1108,7 +1116,7 @@ int app_on_gamedev (app_t * app, SDL_Event * evt)
 int app_printxy (app_t * app, TTF_Font * fon, int x, int y, const char * msg)
 {
   SDL_Color fg = { 0xff, 0xff, 0xff, 0xff };
-  SDL_Surface * textsurf = TTF_RenderText_Blended(fon, msg, fg);
+  SDL_Surface * textsurf = TTF_RenderUTF8_Blended(fon, msg, fg);
   SDL_Rect dst = { x, y, textsurf->w, textsurf->h };
   SDL_Texture * blttex = SDL_CreateTextureFromSurface(app->r, textsurf);
   SDL_RenderCopy(app->r, blttex, NULL, &dst);
@@ -1149,7 +1157,7 @@ int app_install_text (app_t * app, int decor_idx, TTF_Font * fon, int x, int y, 
 	}
     }
 
-  textsurf = TTF_RenderText_Blended(fon, msg, fg);
+  textsurf = TTF_RenderUTF8_Blended(fon, msg, fg);
   blttex = SDL_CreateTextureFromSurface(app->r, textsurf);
   app->decor[decor_idx].x = x;
   app->decor[decor_idx].y = y;
@@ -1176,8 +1184,6 @@ int app_render_decor (app_t * app)
 	  decor->tex = blttex;
 	}
       SDL_Rect dst;
-      SDL_memset(&dst, 0, sizeof(dst));
-
       dst.x = decor->x;
       dst.y = decor->y;
       dst.w = textsurf->w;
@@ -1192,6 +1198,7 @@ int app_render_decor (app_t * app)
 /* Handle all graphics output. */
 int app_cycle_gfx (app_t * app, long t)
 {
+  (void)t;
   SDL_SetRenderDrawColor(app->r, 0,0,0,0);
   SDL_RenderClear(app->r);
 
@@ -1339,17 +1346,58 @@ int app_cycle_updates (app_t * app, long t)
 {
   /* update heartbeat history. */
   struct heartbeats_s * heartbeats = &(app->heartbeats);
+  if (0 == heartbeats->cycles_per_heartbeat)
+    {
+      heartbeats->cycles_per_heartbeat = MAINLOOP_PER_HEARTBEAT;
+    }
+  const int divisor = heartbeats->cycles_per_heartbeat;
 
-  const int divisor = 500;
   if ((heartbeats->n % divisor) == 0)
     {
       int k = (heartbeats->n / divisor);
       char buf[64];
       int delta = t - heartbeats->t;
-      SDL_snprintf(buf, sizeof(buf), "Tick %d (+%d)", k, delta);
-      app_write(app, CAT_MISC, buf);
+      if (app->log_heartbeat)
+	{
+	  SDL_snprintf(buf, sizeof(buf), "Tick %d (+%d)", k, delta);
+	  app_write(app, CAT_MISC, buf);
+	}
       heartbeats->t = t;
-    }
+
+      /* nextsample wraps in circular buffer, nsamples ceilings at max. */
+      heartbeats->samples[heartbeats->nextsample++] = delta;
+      heartbeats->nextsample %= MAX_HEARTBEATS;
+      if (heartbeats->nsamples < MAX_HEARTBEATS)
+	heartbeats->nsamples++;
+
+      /* calculate various statistical values. */
+      long sum = 0;
+      long sumsq = 0;
+      long nsamples = heartbeats->nsamples;
+      for (int i = 0; i < heartbeats->nsamples; i++)
+	{
+	  long sample = heartbeats->samples[i];
+	  sum += sample;
+	  sumsq += (sample * sample);
+	}
+
+      long variance = 0;
+      long mean = delta;
+      if (nsamples > 1)
+	{
+	  variance = (sumsq - (sum*sum / nsamples)) / (nsamples-1);
+	  mean = sum / nsamples;
+	}
+      long sigma = SDL_sqrtf(variance);
+
+      static const char heart0[] = "♥";
+      static const char heart1[] = "♡";
+      int which = k % 2;
+      SDL_snprintf(buf, sizeof(buf), "%s +%d x̄=%ld σ=%ld", which ? heart0 : heart1, delta, mean, sigma);
+      int x = 0;
+      int y = app->height - 20;
+      app_install_text(app, MAX_GFXDECOR-1, app->fonts[2], x, y, buf);
+    };
   heartbeats->n++;
 
   /* banner text at top of surface. */
@@ -1374,12 +1422,11 @@ int app_cycle_updates (app_t * app, long t)
 	      if (msg && *msg)
 		{
 		  SDL_LogDebug(SDL_LOG_CATEGORY_APPLICATION, "create text %d,%d", catnum, linenum);
-		  SDL_Surface * textsurf = TTF_RenderText_Blended(fon, msg, fg);
+		  SDL_Surface * textsurf = TTF_RenderUTF8_Blended(fon, msg, fg);
 		  entry->tex = SDL_CreateTextureFromSurface(app->r, textsurf);
 		  entry->surf = textsurf;
 		}
 	    }
-	  /* Generate texture during render cycle. */
 
 	  /* Calculate age-fade effect. */
 	  long age = t - entry->fade.spawntime;
@@ -1420,7 +1467,6 @@ int app_cycle (app_t * app, long t)
 int app_main (app_t * app)
 {
   app->alive = 1;
-  int n = 0;
 
   /* main loop */
   while (app->alive != 0)
