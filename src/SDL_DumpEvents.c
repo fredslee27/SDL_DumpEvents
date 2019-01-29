@@ -60,8 +60,8 @@ MISC       | KEYB      | MOUSE     | JOY      | CONTROLLER
 
 /* Maximum length of one log line, bytes. */
 #define MAX_LINELENGTH 256
-/* Maximum number of log lines per category. */
-#define MAX_NUMLINES 32
+/* Maximum number of log lines per category. */ /* 2400p / 16perRow */
+#define MAX_NUMLINES 150
 /* Max number of joystick devices to recognize. */
 #define MAX_JOYSTICKS 8
 /* Max number of game controller (gamepad) devices to recognize. */
@@ -76,6 +76,9 @@ MISC       | KEYB      | MOUSE     | JOY      | CONTROLLER
 /* Default window size. */
 #define DEFAULT_WIDTH 1280
 #define DEFAULT_HEIGHT 720
+
+/* "adjustment" pixels vertically to reserve away from the scrolling log. */
+#define RESERVED_ROWS 80
 
 #define DEFAULT_MAPPING_ENVVAR "SDL_DUMPEVENTS_MAPPING"
 
@@ -128,11 +131,14 @@ typedef struct logentry_s {
 
 /* List of logentry instances; one per category column. */
 typedef struct logbuf_s {
-    int cap;  // maximum lines permitted.
-    int len;  // current lines valid.
+    int alloc; // number of lines allocated in memory (when using malloc).
+    /* alloc == 0 if using the static memory space, which is also used if malloc()/realloc() returns NULL (i.e. malloc() can be stubbed as "return 0;"). */
+    int cap;   // maximum lines permitted.
+    int len;   // current lines valid.
     int head;  // ring buffer.
 
-    logentry_t buf[MAX_NUMLINES];
+    logentry_t _static[MAX_NUMLINES];
+    logentry_t * buf;
 } logbuf_t;
 
 enum mapping_protocol_e {
@@ -172,6 +178,8 @@ typedef struct app_s {
     int rflags;
     SDL_Renderer *r;
     SDL_GLContext glctx;
+
+    int rowsize;
 
     SDL_RWops * font_io[1];  /* SDL_RWops* type for TTF (file). */
     TTF_Font * fonts[4];
@@ -250,12 +258,67 @@ logbuf_t * logbuf_init (logbuf_t * logbuf, int cap)
       cap = MAX_NUMLINES;
     }
   logbuf->cap = cap;
+  if (cap <= MAX_NUMLINES)
+    {
+      /* use static space. */
+      logbuf->alloc = 0;
+      logbuf->buf = logbuf->_static;
+    }
+  else
+    {
+      /* use heap. */
+      logbuf->alloc = sizeof(logentry_t) * cap;
+      logbuf->buf = SDL_malloc(logbuf->alloc);
+      if (! logbuf->buf)
+	{
+	  /* fallback to static. */
+	  logbuf->alloc = 0;
+	  logbuf->cap = MAX_NUMLINES;
+	  logbuf->buf = logbuf->_static;
+	}
+      else
+	{
+	  logbuf->cap = cap;
+	}
+    }
   return logbuf;
 }
 
 logbuf_t * logbuf_destroy (logbuf_t * logbuf)
 {
   return logbuf;
+}
+
+int logbuf_resize (logbuf_t * logbuf, int histlen)
+{
+  if (histlen <= MAX_NUMLINES)
+    {
+      /* use static space. */
+      logbuf->alloc = 0;
+      logbuf->cap = histlen;
+      logbuf->buf = logbuf->_static;
+    }
+  else
+    {
+      /* use heap. */
+      logbuf->alloc = sizeof(logentry_t) * histlen;
+      logbuf->buf = SDL_realloc(logbuf->buf, logbuf->alloc);
+      if (! logbuf->buf)
+	{
+	  /* fallback to static. */
+	  logbuf->alloc = 0;
+	  logbuf->cap = MAX_NUMLINES;
+	  logbuf->buf = logbuf->_static;
+	}
+      else
+	{
+	  logbuf->cap = histlen;
+	}
+    }
+  logbuf->head = 0;
+  logbuf->len = 0;
+
+  return logbuf->cap;
 }
 
 /* append line to buffer. */
@@ -283,6 +346,13 @@ int logbuf_append (logbuf_t * logbuf, const char * buf, int buflen)
 int logbuf_len (logbuf_t * logbuf)
 {
   return logbuf->len;
+}
+
+int logbuf_clear (logbuf_t * logbuf)
+{
+  logbuf->head = 0;
+  logbuf->len = 0;
+  return 0;
 }
 
 logentry_t * logbuf_get (logbuf_t * logbuf, int nth)
@@ -623,9 +693,10 @@ app_t * app_init (app_t * app, int argc, char ** argv)
   if (! app->height) app->height = DEFAULT_HEIGHT;
   app->x0 = SDL_WINDOWPOS_UNDEFINED;
   app->y0 = SDL_WINDOWPOS_UNDEFINED;
-  app->wflags = SDL_WINDOW_OPENGL;
+  app->wflags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE;
   app->rindex = 0;
   app->rflags = 0;
+  app->rowsize = 20;
 
   app->w = SDL_CreateWindow(app->title0,
 			    app->x0, app->y0,
@@ -708,6 +779,15 @@ app_t * app_destroy (app_t * app)
   return app;
 }
 
+int app_clear (app_t * app)
+{
+  for (int catnum = 0; catnum < MAX_CATEGORIES; catnum++)
+    {
+      logbuf_clear(app->logbuf + catnum);
+    }
+  return 0;
+}
+
 
 int app_write (app_t * app, int category, const char * msg)
 {
@@ -744,6 +824,24 @@ int app_on_quit (app_t * app, SDL_Event * evt)
   return 0;
 }
 
+int app_invalidate_decors (app_t * app);
+
+int app_resize (app_t * app, int width, int height)
+{
+  app->width = width;
+  app->height = height;
+  app_clear(app);
+  app_invalidate_decors(app);
+  int histsize = (height - RESERVED_ROWS) / app->rowsize;
+  if (histsize < 1) histsize = 1;
+  for (int catnum = 0; catnum < MAX_CATEGORIES; catnum++)
+    {
+      logbuf_resize(app->logbuf + catnum, histsize);
+    }
+
+  return 0;
+}
+
 int app_on_window (app_t * app, SDL_Event * evt)
 {
   switch (evt->window.event)
@@ -764,6 +862,8 @@ int app_on_window (app_t * app, SDL_Event * evt)
       app_write(app, CAT_MISC, "WIN RESIZED");
       break;
     case SDL_WINDOWEVENT_SIZE_CHANGED:
+      /* TODO: check windowID for which window. */
+      app_resize(app, evt->window.data1, evt->window.data2);
       app_write(app, CAT_MISC, "WIN SIZE_CHANGED");
       break;
     case SDL_WINDOWEVENT_MINIMIZED:
@@ -1137,6 +1237,25 @@ struct gfxdecor_s * app_get_decor (app_t * app, int decor_idx)
   return retval;
 }
 
+int app_invalidate_decors (app_t * app)
+{
+  for (int decor_idx = 1; decor_idx <= MAX_CATEGORIES; decor_idx++)
+    {
+      struct gfxdecor_s * retval = app->decor + decor_idx;
+      if (retval->tex)
+	{
+	  SDL_DestroyTexture(retval->tex);
+	  retval->tex = NULL;
+	}
+      if (retval->surf)
+	{
+	  SDL_FreeSurface(retval->surf);
+	  retval->surf = NULL;
+	}
+    }
+  return 0;
+}
+
 /* Generate and store text at a location to be rendered across many presentation cycles. */
 int app_install_text (app_t * app, int decor_idx, TTF_Font * fon, int x, int y, const char * msg)
 {
@@ -1226,7 +1345,7 @@ int app_cycle_gfx (app_t * app, long t)
       int maxlines = logbuf->cap;
       for (int linenum = 0; linenum < maxlines; linenum++)
 	{
-	  y += 20;
+	  y += app->rowsize;
 	  logentry_t * entry = logbuf_get(app->logbuf + catnum, linenum);
 	  if (!entry) continue;
 	  SDL_Surface * textsurf = entry->surf;
