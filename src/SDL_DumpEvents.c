@@ -80,6 +80,12 @@ MISC       | KEYB      | MOUSE     | JOY      | CONTROLLER
 /* "adjustment" pixels vertically to reserve away from the scrolling log. */
 #define RESERVED_ROWS 80
 
+/* Pre-assigned decor ids. */
+#define DECORID_BANNER 0
+#define DECORID_CATEGORIES 1
+#define DECORID_ENTRYBOX (DECORID_CATEGORIES + MAX_CATEGORIES)
+#define DECORID_FOOTER (DECORID_ENTRYBOX + 1)
+
 #define DEFAULT_MAPPING_ENVVAR "SDL_DUMPEVENTS_MAPPING"
 
 /* Fade effect parameters. */
@@ -205,6 +211,9 @@ typedef struct app_s {
 
     /* SDL window title. */
     char title0[255];
+
+    /* Text entry contents, utf-8. */ /* Re-use logbuf ops for entrybox. */
+    logbuf_t entrybox;
 } app_t;
 
 
@@ -238,6 +247,7 @@ const unsigned char * ttf0_data_end = ttf0_data;
 
 
 const char BANNER[] = APP_TITLE " - add as Non-Steam Game, run from Big Picture Mode; ESCAPE to quit";
+const char FOOTER[] = "F2: TextEntry";
 
 
 logbuf_t * logbuf_init (logbuf_t * logbuf, int cap)
@@ -590,6 +600,8 @@ int find_slot (int packcount, void ** pack, int (*predicate)(void*, void*), void
 
 
 
+int app_resize (app_t *, int, int);
+
 /*
    Initialize app state.
 
@@ -615,6 +627,7 @@ app_t * app_init (app_t * app, int argc, char ** argv)
     {
       logbuf_init(app->logbuf + i, 0);
     }
+  logbuf_init(&app->entrybox, 1);
 
   /* Parse command-line arguments here. */
   if (! app_parse_argv(app, argc, argv))
@@ -708,6 +721,8 @@ app_t * app_init (app_t * app, int argc, char ** argv)
   if (! app->age_fade_period) app->age_fade_period = DEFAULT_AGE_FADE_PERIOD;
   if (! app->age_fade_start) app->age_fade_start = DEFAULT_AGE_FADE_ALPHA_START;
   if (! app->age_fade_end) app->age_fade_end = DEFAULT_AGE_FADE_ALPHA_END;
+
+  app_resize(app, app->width, app->height);
 
 
   /* load fonts. */
@@ -927,6 +942,19 @@ int app_on_keyup (app_t * app, SDL_Event * evt)
   if (evt->key.keysym.sym == SDLK_ESCAPE)
     {
       app->alive = 0;
+    }
+  if (evt->key.keysym.sym == SDLK_F2)
+    {
+      if (SDL_IsTextInputActive())
+	{
+	  SDL_StopTextInput();
+	}
+      else
+	{
+	  SDL_StartTextInput();
+	  SDL_Rect iptRect = { 16, 20, 120, 20 };
+	  SDL_SetTextInputRect(&iptRect);
+	}
     }
   return 0;
 }
@@ -1210,6 +1238,20 @@ int app_on_gamedev (app_t * app, SDL_Event * evt)
   return 0;
 }
 
+int app_on_textinput (app_t * app, SDL_Event * evt)
+{
+  char buf[MAX_LINELENGTH];
+  snprintf(buf, sizeof(buf), "TEXTINPUT %s", evt->text.text);
+  app_write(app, CAT_MISC, buf);
+  return 0;
+}
+
+int app_on_textedit (app_t * app, SDL_Event * evt)
+{
+  (void)evt;
+  app_write(app, CAT_MISC, "TEXTEDITING");
+  return 0;
+}
 
 
 /* Render text at a location for the current presentation cycle (frame). */
@@ -1239,8 +1281,9 @@ struct gfxdecor_s * app_get_decor (app_t * app, int decor_idx)
 
 int app_invalidate_decors (app_t * app)
 {
-  for (int decor_idx = 1; decor_idx <= MAX_CATEGORIES; decor_idx++)
+  for (int catnum = 0; catnum < MAX_CATEGORIES; catnum++)
     {
+      int decor_idx = catnum + DECORID_CATEGORIES;
       struct gfxdecor_s * retval = app->decor + decor_idx;
       if (retval->tex)
 	{
@@ -1337,8 +1380,9 @@ int app_cycle_gfx (app_t * app, long t)
 	}
 
       /* Place category name as column header. */
-      if (!app_get_decor(app, catnum+1))
-	app_install_text(app, catnum+1, app->fonts[2], x, y, catlabel[catnum]);
+      int decorid_cat = catnum + DECORID_CATEGORIES;
+      if (!app_get_decor(app, decorid_cat))
+	app_install_text(app, decorid_cat, app->fonts[2], x, y, catlabel[catnum]);
 
       /* Render log lines for current category. */
       struct logbuf_s * logbuf = app->logbuf + catnum;
@@ -1453,6 +1497,12 @@ int app_cycle_events (app_t * app)
 	case SDL_CONTROLLERDEVICEREMAPPED:
 	  app_on_gamedev(app, evt);
 	  break;
+	case SDL_TEXTINPUT:
+	  app_on_textinput(app, evt);
+	  break;
+	case SDL_TEXTEDITING:
+	  app_on_textedit(app, evt);
+	  break;
 	default:
 	  break;
 	}
@@ -1520,8 +1570,10 @@ int app_cycle_updates (app_t * app, long t)
   heartbeats->n++;
 
   /* banner text at top of surface. */
-  if (!app_get_decor(app, 0))
-    app_install_text(app, 0, app->fonts[2], 0, 0, BANNER);
+  if (!app_get_decor(app, DECORID_BANNER))
+    app_install_text(app, DECORID_BANNER, app->fonts[2], 0, 0, BANNER);
+  if (!app_get_decor(app, DECORID_ENTRYBOX))
+    app_install_text(app, DECORID_ENTRYBOX, app->fonts[2], 0, 0, app->entrybox.buf[0].line);
 
 
   for (int catnum = 0; catnum < MAX_CATEGORIES; catnum++)
